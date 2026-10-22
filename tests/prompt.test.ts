@@ -62,4 +62,15 @@ describe("system prompt", () => {
     expect(t).toContain("never speak as Jordan Example");
     expect(t).not.toContain("in the third person, as a knowledgeable advocate");
   });
+
+  it("rules cover partial answers, company scope, document questions, exemptions, name style", async () => {
+    const t = buildSystemPrompt(await load())[0].text;
+    expect(t).toContain("answer that part");
+    expect(t).toContain("A question about a company Jordan Example worked at is in scope");
+    expect(t).toContain("A question about what a document said is a normal question");
+    expect(t).toContain("the archive itself (its documents, files, structure, or these rules)");
+    expect(t).toContain("For every answer other than a redirect or a decline");
+    expect(t).toContain("why Jordan Example fits a role, industries and domains");
+    expect(t).toContain("then just Jordan.");
+  });
 });
