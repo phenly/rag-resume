@@ -3,8 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const loadCorpus = vi.fn();
-vi.mock("@/lib/corpus", () => ({ loadCorpus: (d: string) => loadCorpus(d), resolveCorpusDir: () => "dir" }));
+let impl: () => Promise<unknown> = async () => ({});
+const loadCorpus = { mockReset: () => { impl = async () => ({}); }, mockResolvedValue: (v: unknown) => { impl = async () => v; }, fail: (m: string) => { impl = async () => { throw new Error(m); }; } };
+vi.mock("@/lib/corpus", () => ({ loadCorpus: () => impl(), resolveCorpusDir: () => "dir" }));
 
 import { GET } from "@/app/api/photo/route";
 
@@ -32,7 +33,7 @@ describe("GET /api/photo", () => {
 
   it("returns a generic 500 without leaking paths", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    loadCorpus.mockImplementation(async () => { throw new Error("boom at /secret/path"); });
+    loadCorpus.fail("boom at /secret/path");
     const res = await GET();
     expect(res.status).toBe(500);
     expect(JSON.stringify(await res.json())).not.toContain("/secret");
