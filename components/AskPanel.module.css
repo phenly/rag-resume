@@ -1,0 +1,15 @@
+.panel { display: flex; flex-direction: column; gap: var(--space-4); }
+.form { display: flex; flex-direction: column; gap: var(--space-2); background: var(--color-card); border-radius: var(--radius-card); box-shadow: var(--shadow-card); padding: var(--space-4); }
+.label { font-weight: 600; }
+.textarea { width: 100%; resize: vertical; padding: var(--space-3); font: inherit; color: inherit; border: 1px solid var(--color-border); border-radius: var(--radius-input); }
+.textarea:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.ask { align-self: flex-end; padding: var(--space-2) var(--space-5); font: inherit; font-weight: 600; color: var(--color-on-accent); background: var(--color-accent); border: 0; border-radius: var(--radius-chip); cursor: pointer; }
+.ask:hover:not(:disabled) { background: var(--color-accent-hover); }
+.ask:disabled { background: var(--color-disabled); cursor: not-allowed; }
+.chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.groupLabel { font-size: var(--font-size-small); color: var(--color-muted); }
+.chip { padding: var(--space-1) var(--space-3); font: inherit; font-size: var(--font-size-small); color: var(--color-accent); background: var(--color-card); border: 1px solid var(--color-accent); border-radius: var(--radius-chip); cursor: pointer; }
+.chip:hover:not(:disabled) { background: var(--color-accent-soft); }
+.chip:disabled { color: var(--color-muted); border-color: var(--color-disabled); cursor: not-allowed; }
+.breakChip { border-style: dashed; }
+.answers { display: flex; flex-direction: column; gap: var(--space-4); }
