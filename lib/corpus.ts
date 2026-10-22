@@ -20,10 +20,13 @@ export type Corpus = {
 
 export class CorpusError extends Error {
   entryTitle?: string;
-  constructor(message: string, entryTitle?: string) {
+  /** Server-side detail (may contain filesystem paths); never show to clients. */
+  detail?: string;
+  constructor(message: string, opts: { entryTitle?: string; detail?: string } = {}) {
     super(message);
     this.name = "CorpusError";
-    this.entryTitle = entryTitle;
+    this.entryTitle = opts.entryTitle;
+    this.detail = opts.detail;
   }
 }
 
@@ -33,46 +36,81 @@ export function resolveCorpusDir(env: Record<string, string | undefined> = proce
   return path.resolve(process.cwd(), configured || "sample-corpus");
 }
 
-async function readText(dir: string, p: string, title?: string): Promise<string> {
+async function readText(dir: string, p: string, label: string, entryTitle?: string): Promise<string> {
   const full = path.resolve(dir, p);
   try {
     return await readFile(full, "utf8");
   } catch {
-    throw new CorpusError(
-      `Cannot read ${title ? `document "${title}"` : "file"} at ${full}`,
-      title,
-    );
+    throw new CorpusError(`Corpus ${label} is missing or unreadable`, {
+      entryTitle,
+      detail: full,
+    });
   }
 }
 
-export async function loadCorpus(dir: string): Promise<Corpus> {
-  const manifestText = await readText(dir, "corpus.json");
-  let manifest: {
-    profile: string;
-    positioningNotes: string;
-    documents: { title: string; path: string }[];
-  };
+function parseJson(text: string, label: string): unknown {
   try {
-    manifest = JSON.parse(manifestText);
+    return JSON.parse(text);
   } catch {
-    throw new CorpusError(`corpus.json in ${dir} is not valid JSON`);
+    throw new CorpusError(`Corpus ${label} is not valid JSON`);
   }
-  if (!manifest.profile || !manifest.positioningNotes || !Array.isArray(manifest.documents)) {
-    throw new CorpusError("corpus.json must have profile, positioningNotes and documents");
-  }
+}
 
-  let profile: Profile;
-  try {
-    profile = JSON.parse(await readText(dir, manifest.profile));
-  } catch (e) {
-    if (e instanceof CorpusError) throw e;
-    throw new CorpusError(`${manifest.profile} is not valid JSON`);
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+const isStr = (v: unknown): v is string => typeof v === "string";
+const isNonEmpty = (v: unknown): v is string => isStr(v) && v.trim() !== "";
+const isStrArr = (v: unknown): v is string[] => Array.isArray(v) && v.every(isStr);
+
+type Manifest = {
+  profile: string;
+  positioningNotes: string;
+  documents: { title: string; path: string }[];
+};
+
+function validateManifest(m: unknown): Manifest {
+  if (!isObj(m)) throw new CorpusError("corpus.json must be an object");
+  if (!isNonEmpty(m.profile)) throw new CorpusError("corpus.json: profile must be a file path string");
+  if (!isNonEmpty(m.positioningNotes))
+    throw new CorpusError("corpus.json: positioningNotes must be a file path string");
+  if (!Array.isArray(m.documents)) throw new CorpusError("corpus.json: documents must be an array");
+  m.documents.forEach((d, i) => {
+    if (!isObj(d) || !isNonEmpty(d.title) || !isNonEmpty(d.path))
+      throw new CorpusError(`corpus.json: documents[${i}] needs a non-empty title and path`);
+  });
+  return m as Manifest;
+}
+
+function validateProfile(p: unknown): Profile {
+  if (!isObj(p)) throw new CorpusError("profile.json must be an object");
+  for (const k of ["name", "headline", "about", "blurb"] as const) {
+    if (!isStr(p[k])) throw new CorpusError(`profile.json: ${k} must be a string`);
   }
-  const positioningNotes = await readText(dir, manifest.positioningNotes);
+  for (const k of ["starterQuestions", "breakItQuestions"] as const) {
+    if (!isStrArr(p[k])) throw new CorpusError(`profile.json: ${k} must be an array of strings`);
+  }
+  if (
+    !Array.isArray(p.links) ||
+    !p.links.every((l) => isObj(l) && isStr(l.label) && isStr(l.url))
+  )
+    throw new CorpusError("profile.json: links must be an array of {label, url}");
+  return p as unknown as Profile;
+}
+
+export async function loadCorpus(dir: string): Promise<Corpus> {
+  const manifest = validateManifest(
+    parseJson(await readText(dir, "corpus.json", "manifest"), "manifest"),
+  );
+  const profile = validateProfile(
+    parseJson(await readText(dir, manifest.profile, "profile"), "profile"),
+  );
+  const positioningNotes = redactContacts(
+    await readText(dir, manifest.positioningNotes, "positioning notes"),
+  );
 
   const documents: CorpusDocument[] = [];
   for (const entry of manifest.documents) {
-    const raw = await readText(dir, entry.path, entry.title);
+    const raw = await readText(dir, entry.path, `document "${entry.title}"`, entry.title);
     documents.push({ title: entry.title, text: redactContacts(raw) });
   }
   return { profile, positioningNotes, documents };

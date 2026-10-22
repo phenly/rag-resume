@@ -19,4 +19,13 @@ describe("redactContacts", () => {
     const s = "2019–2024, $2.5M, [ACM-PLT-01], Boston, MA";
     expect(redactContacts(s)).toBe(s);
   });
+
+  it("does not treat a number and a capitalized word across a line break as an address", () => {
+    const s = "team grew to 22\nDrive adoption was key";
+    expect(redactContacts(s)).toBe(s);
+  });
+
+  it("does not mangle words that merely start with a unit token", () => {
+    expect(redactContacts("12 Main St, Stephen")).toContain("Stephen");
+  });
 });

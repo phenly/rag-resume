@@ -2,8 +2,9 @@ const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
 const PHONE = /(?<![\d$])(?:\+?1[\s.-]?)?(?:\(\d{3}\)\s?|\d{3}[\s.-])\d{3}[\s.-]\d{4}(?!\d)/g;
 const SUFFIX =
   "(?:Street|St|Road|Rd|Avenue|Ave|Lane|Ln|Drive|Dr|Boulevard|Blvd|Court|Ct|Way|Place|Pl)";
+// Inter-word whitespace is [ \t] so an address never spans a line break.
 const ADDRESS = new RegExp(
-  `\\b\\d{1,6}\\s+(?:[A-Z][A-Za-z.'-]*\\s+){0,4}${SUFFIX}\\b\\.?(?:,?\\s*(?:Unit|Apt|Apartment|Suite|Ste|#)\\s*[A-Za-z0-9-]+)?`,
+  `\\b\\d{1,6}[ \\t]+(?:[A-Z][A-Za-z.'-]*[ \\t]+){0,4}${SUFFIX}\\b\\.?(?:,?[ \\t]*(?:Unit|Apt|Apartment|Suite|Ste|#)\\b[ \\t]*[A-Za-z0-9-]+)?`,
   "g",
 );
 
