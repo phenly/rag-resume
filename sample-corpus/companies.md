@@ -6,7 +6,7 @@ Quillfeather Systems builds planning and dispatch software for regional fleet op
 
 ## Gullwing Freight Labs (Senior Product Manager, 2018–2021)
 
-Gullwing Freight Labs is a freight logistics company that combines shipment tracking for its own carrier network with software for drivers and dispatchers. Its best-known consumer-facing product is Beacon, a shipment-tracking app for drivers that reached about 30,000 monthly active users during Jordan's time there. The company was a growth-stage business of roughly 400 employees, with a large field workforce and a smaller central product and data group. Jordan's team sat in that central product group, working closely with the driver app engineers and the analytics team that built the late-delivery reporting.
+Gullwing Freight Labs is a freight logistics company that combines shipment tracking for its own carrier network with software for drivers and dispatchers. Its best-known consumer-facing product is Beacon, a shipment-tracking app for drivers that reached about 30,000 monthly active drivers during Jordan's time there. The company was a growth-stage business of roughly 400 employees, with a large field workforce and a smaller central product and data group. Jordan's team sat in that central product group, working closely with the driver app engineers, and Jordan built the late-delivery dashboard from that group.
 
 ## Lumenpost Apps (Product Manager, 2015–2018)
 
