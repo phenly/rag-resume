@@ -85,6 +85,22 @@ describe("AskShell + AskPanel", () => {
     expect(msgs[1]).toHaveTextContent("ans");
   });
 
+  it("shows no visible name labels, only screen-reader prefixes", async () => {
+    fetchMock.mockImplementation(async () =>
+      ndjson([line({ type: "text", text: "ans" }), line({ type: "done", status: "complete" })]),
+    );
+    render(<AskShell profileCard={<div />} {...props} />);
+    chipAsk("Starter one?");
+    await waitFor(() => expect(document.querySelectorAll("[data-message]")).toHaveLength(2));
+    const [user, answer] = Array.from(document.querySelectorAll("[data-message]"));
+    expect(user.textContent).toBe("You asked: Starter one?");
+    expect(answer.textContent).toContain("Answer:");
+    const hidden = Array.from(document.querySelectorAll("[data-message] .sr-only")).map((e) => e.textContent?.trim());
+    expect(hidden).toEqual(["You asked:", "Answer:"]);
+    expect(screen.queryByText("You")).toBeNull();
+    expect(screen.queryByText("Jordan")).toBeNull();
+  });
+
   it("non-200 shows the server's error on the card", async () => {
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ error: "That question is too long." }), {
@@ -190,6 +206,21 @@ describe("AskShell + AskPanel", () => {
     expect(screen.getByRole("button", { name: "Fewer examples" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Try to break it (1)" }));
     expect(screen.getByRole("button", { name: "Break it?" })).toBeInTheDocument();
+  });
+
+  it("collapses both disclosures on a second click", () => {
+    const five = ["A?", "B?", "C?", "D?", "E?"];
+    render(<AskShell profileCard={<div />} {...props} starterQuestions={five} />);
+    fireEvent.click(screen.getByRole("button", { name: "More examples (2)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fewer examples" }));
+    expect(screen.getAllByRole("button", { name: /^[A-E]\?$/ })).toHaveLength(3);
+    expect(screen.getByRole("button", { name: "More examples (2)" })).toHaveAttribute("aria-expanded", "false");
+    const toggle = screen.getByRole("button", { name: "Try to break it (1)" });
+    fireEvent.click(toggle);
+    expect(screen.getByRole("button", { name: "Break it?" })).toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(screen.queryByRole("button", { name: "Break it?" })).toBeNull();
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
   });
 
   it("renders no toggles for short lists", () => {

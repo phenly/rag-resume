@@ -4,11 +4,11 @@ import styles from "./AnswerCard.module.css";
 
 export type CardStatus = "streaming" | "complete" | "incomplete" | "refused" | "error";
 
-export function AnswerCard({ text, status, error, label }: { text: string; status: CardStatus; error?: string; label?: string }) {
+export function AnswerCard({ text, status, error }: { text: string; status: CardStatus; error?: string }) {
   const { body, basedOn } = splitBasedOn(text);
   return (
     <section className={styles.card} data-message="answer" aria-busy={status === "streaming"}>
-      {label && <p className={styles.label}>{label}</p>}
+      <span className="sr-only">Answer:</span>
       {body && (
         <div className={styles.body}>
           <Markdown disallowedElements={["img"]} components={{ a: "span" }}>

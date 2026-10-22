@@ -31,7 +31,6 @@ export function AskPanel({ candidateName, input, onInputChange, busy, onBusyChan
   const nextId = useRef(1);
   const listRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
-  const firstName = candidateName.trim().split(/\s+/)[0] || candidateName;
 
   // Auto-scroll as cards change, but only if the reader is already near the bottom.
   useEffect(() => {
@@ -122,10 +121,9 @@ export function AskPanel({ candidateName, input, onInputChange, busy, onBusyChan
         {cards.map((c) => (
           <Fragment key={c.id}>
             <div className={styles.userBubble} data-message="user">
-              <p className={styles.userLabel}>You</p>
-              <p className={styles.userText}>{c.question}</p>
+              <p className={styles.userText}><span className="sr-only">You asked: </span>{c.question}</p>
             </div>
-            <AnswerCard label={firstName} text={c.text} status={c.status} error={c.error} />
+            <AnswerCard text={c.text} status={c.status} error={c.error} />
           </Fragment>
         ))}
       </div>
