@@ -17,4 +17,6 @@
 .ask { align-self: flex-end; padding: var(--space-2) var(--space-5); font: inherit; font-weight: 600; color: var(--color-on-accent); background: var(--color-accent); border: 0; border-radius: var(--radius-chip); cursor: pointer; }
 .ask:hover:not(:disabled) { background: var(--color-accent-hover); }
 .ask:disabled { background: var(--color-disabled); cursor: not-allowed; }
+@supports (height: 100dvh) { .panel { height: var(--panel-height-dvh); } }
 @media (max-width: 768px) { .panel { height: var(--panel-height-mobile); } }
+@media (max-width: 768px) { @supports (height: 100dvh) { .panel { height: var(--panel-height-mobile-dvh); } } }

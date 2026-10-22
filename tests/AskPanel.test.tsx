@@ -154,4 +154,25 @@ describe("AskPanel", () => {
     fireEvent.keyDown(box, { key: "Enter", isComposing: true });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("clicking the same chip twice keeps focus in the box and typing does not move the caret", () => {
+    render(<AskPanel {...props} />);
+    const box = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.click(screen.getByRole("button", { name: "Starter one?" }));
+    fireEvent.click(screen.getByRole("button", { name: "Starter one?" }));
+    expect(box).toHaveFocus();
+    box.setSelectionRange(3, 3);
+    fireEvent.change(box, { target: { value: "Starxter one?" } });
+    box.setSelectionRange(5, 5);
+    expect(box.selectionStart).toBe(5);
+  });
+
+  it("announces a status-aware message when an answer ends", async () => {
+    fetchMock.mockResolvedValue(ndjson([line({ type: "done", status: "incomplete" })]));
+    const { container } = render(<AskPanel {...props} />);
+    chipAsk("Starter one?");
+    await waitFor(() =>
+      expect(container.querySelector("[aria-live]")).toHaveTextContent("Answer cut off at its length limit."),
+    );
+  });
 });

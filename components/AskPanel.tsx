@@ -1,11 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { createEventParser } from "@/lib/events";
 import { AnswerCard, type CardStatus } from "./AnswerCard";
 import styles from "./AskPanel.module.css";
 
 const NEAR_BOTTOM_PX = 80;
+
+const ANNOUNCEMENTS = {
+  complete: "Answer finished.",
+  incomplete: "Answer cut off at its length limit.",
+  refused: "Answer declined.",
+  error: "Answer failed.",
+} as const;
 
 type Card = { id: number; question: string; text: string; status: CardStatus; error?: string };
 
@@ -18,7 +26,6 @@ export function AskPanel({ starterQuestions, breakItQuestions, candidateName }: 
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const stickToBottom = useRef(true);
-  const focusAfterFill = useRef(false);
 
   // Auto-scroll as cards change, but only if the reader is already near the bottom.
   useEffect(() => {
@@ -26,20 +33,15 @@ export function AskPanel({ starterQuestions, breakItQuestions, candidateName }: 
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
   }, [cards]);
 
-  // After a chip fills the box: focus it with the cursor at the end.
-  useEffect(() => {
-    if (!focusAfterFill.current) return;
-    focusAfterFill.current = false;
+  // Chips fill the box, then focus it with the caret at the end. Done directly
+  // (not in an effect) so it also works when the chip text equals the current input.
+  function fill(q: string) {
+    flushSync(() => setInput(q));
     const el = inputRef.current;
     if (el) {
       el.focus();
       el.setSelectionRange(el.value.length, el.value.length);
     }
-  }, [input]);
-
-  function fill(q: string) {
-    focusAfterFill.current = true;
-    setInput(q);
   }
 
   function onListScroll() {
@@ -60,6 +62,7 @@ export function AskPanel({ starterQuestions, breakItQuestions, candidateName }: 
     setCards((cs) => [...cs, { id, question, text: "", status: "streaming" }]);
 
     let terminal = false;
+    let outcome: "complete" | "incomplete" | "refused" | "error" = "error";
     try {
       const res = await fetch("/api/ask", {
         method: "POST",
@@ -87,6 +90,7 @@ export function AskPanel({ starterQuestions, breakItQuestions, candidateName }: 
             update((c) => ({ ...c, text: c.text + ev.text }));
           } else if (ev.type === "done") {
             terminal = true;
+            outcome = ev.status;
             update((c) => ({ ...c, status: ev.status }));
           } else if (ev.type === "error") {
             terminal = true;
@@ -102,7 +106,7 @@ export function AskPanel({ starterQuestions, breakItQuestions, candidateName }: 
         c.status === "streaming" ? { ...c, status: "error", error: "Could not reach the server. Try again." } : c,
       );
     } finally {
-      setAnnounce("Answer finished.");
+      setAnnounce(ANNOUNCEMENTS[outcome]);
       setBusy(false);
     }
   }
