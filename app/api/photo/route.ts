@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { loadCorpus, resolveCorpusDir } from "@/lib/corpus";
+import { getCorpus } from "@/lib/corpus-cache";
+import { logServerError } from "@/lib/log";
+import { guardLocalRequest } from "@/lib/request-guard";
 
 const TYPES: Record<string, string> = {
   ".jpg": "image/jpeg",
@@ -9,9 +11,11 @@ const TYPES: Record<string, string> = {
   ".webp": "image/webp",
 };
 
-export async function GET() {
+export async function GET(request: Request) {
+  const blocked = guardLocalRequest(request);
+  if (blocked) return blocked;
   try {
-    const { photoPath } = await loadCorpus(resolveCorpusDir());
+    const { photoPath } = await getCorpus();
     if (!photoPath) return Response.json({ error: "No photo." }, { status: 404 });
     const type = TYPES[path.extname(photoPath).toLowerCase()];
     if (!type) return Response.json({ error: "No photo." }, { status: 404 });
@@ -24,8 +28,7 @@ export async function GET() {
       },
     });
   } catch (err) {
-    const e = err as { message?: string; entryTitle?: string; detail?: string };
-    console.error("Failed to serve photo:", e?.message ?? String(err), e?.entryTitle ? `(entry: ${e.entryTitle})` : "", e?.detail ? `(detail: ${e.detail})` : "");
+    logServerError("Failed to serve photo", err);
     return Response.json({ error: "Could not load the photo." }, { status: 500 });
   }
 }

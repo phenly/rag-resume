@@ -98,7 +98,17 @@ function validateProfile(p: unknown): Profile {
     throw new CorpusError("profile.json: links must be an array of {label, url}");
   if (p.photo !== undefined && !isNonEmpty(p.photo))
     throw new CorpusError("profile.json: photo must be a non-empty string");
-  return p as unknown as Profile;
+  // Return only the known fields so stray keys in profile.json never reach the client.
+  return {
+    name: p.name as string,
+    headline: p.headline as string,
+    about: p.about as string,
+    links: (p.links as { label: string; url: string }[]).map((l) => ({ label: l.label, url: l.url })),
+    blurb: p.blurb as string,
+    starterQuestions: p.starterQuestions as string[],
+    breakItQuestions: p.breakItQuestions as string[],
+    ...(p.photo !== undefined ? { photo: p.photo as string } : {}),
+  };
 }
 
 const PHOTO_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
@@ -121,8 +131,13 @@ async function resolvePhoto(dir: string, photo: string): Promise<string> {
     throw new CorpusError("Corpus profile photo must be inside the corpus folder", { detail: real });
   if (!PHOTO_EXTS.has(path.extname(real).toLowerCase()))
     throw new CorpusError("Corpus profile photo must be a .jpg, .jpeg, .png or .webp file", { detail: real });
-  if (!(await stat(real)).isFile())
-    throw new CorpusError("Corpus profile photo must be a regular file", { detail: real });
+  let isFile: boolean;
+  try {
+    isFile = (await stat(real)).isFile();
+  } catch {
+    throw new CorpusError("Corpus profile photo is missing or unreadable", { detail: real });
+  }
+  if (!isFile) throw new CorpusError("Corpus profile photo must be a regular file", { detail: real });
   return real;
 }
 

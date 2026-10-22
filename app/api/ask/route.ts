@@ -1,20 +1,26 @@
-import { CorpusError, loadCorpus, resolveCorpusDir } from "@/lib/corpus";
+import { CorpusError, type Corpus } from "@/lib/corpus";
+import { getCorpus } from "@/lib/corpus-cache";
+import { logServerError } from "@/lib/log";
+import { guardLocalRequest } from "@/lib/request-guard";
 import { buildSystemPrompt } from "@/lib/prompt";
 import { ConfigError, readAskConfig, streamAnswer } from "@/lib/claude";
 import { encodeEvent, MAX_QUESTION_CHARS } from "@/lib/events";
 
 type System = ReturnType<typeof buildSystemPrompt>;
-// Cache only a successful load; a failed load is retried on the next request.
-let cached: System | null = null;
+// The prompt is built once per cached corpus object (getCorpus caches successes only).
+let cached: { corpus: Corpus; system: System } | null = null;
 
 async function getSystem(): Promise<System> {
-  if (!cached) cached = buildSystemPrompt(await loadCorpus(resolveCorpusDir()));
-  return cached;
+  const corpus = await getCorpus();
+  if (!cached || cached.corpus !== corpus) cached = { corpus, system: buildSystemPrompt(corpus) };
+  return cached.system;
 }
 
 const json = (status: number, error: string) => Response.json({ error }, { status });
 
 export async function POST(request: Request): Promise<Response> {
+  const blocked = guardLocalRequest(request, { requireJson: true });
+  if (blocked) return blocked;
   let question: unknown;
   try {
     question = ((await request.json()) as { question?: unknown } | null)?.question;
@@ -41,7 +47,7 @@ export async function POST(request: Request): Promise<Response> {
           else controller.enqueue(encoder.encode(encodeEvent(value)));
         } catch (err) {
           // Never error the stream without a terminal event.
-          console.error("[ask] stream generator threw:", err);
+          logServerError("[ask] stream generator threw", err);
           controller.enqueue(
             encoder.encode(encodeEvent({ type: "error", message: "The answer was cut off. Try again." })),
           );
@@ -60,9 +66,9 @@ export async function POST(request: Request): Promise<Response> {
       return json(500, "The server has no Anthropic API key configured.");
     }
     if (err instanceof CorpusError) {
-      console.error("[ask] corpus error:", err.message, err.entryTitle ?? "", err.detail ?? "");
+      logServerError("[ask] corpus error", err);
     } else {
-      console.error("[ask] unexpected error:", err);
+      logServerError("[ask] unexpected error", err);
     }
     return json(500, "Something went wrong answering that. Try again.");
   }

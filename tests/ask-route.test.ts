@@ -38,7 +38,7 @@ const post = (body: unknown) =>
 let tmp: string | undefined;
 beforeEach(() => {
   process.env.CORPUS_DIR = "sample-corpus";
-  vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -106,5 +106,22 @@ describe("POST /api/ask", () => {
     expect(body).not.toContain(tmp);
     expect(body).not.toContain(path.basename(tmp));
     expect(JSON.parse(body).error).toBe("Something went wrong answering that. Try again.");
+  });
+
+  it("rejects a foreign Host, a mismatched Origin and a non-JSON content type", async () => {
+    const { POST } = await loadRoute();
+    const mk = (headers: Record<string, string>) =>
+      new Request("http://127.0.0.1:3000/api/ask", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ question: "hi" }),
+      });
+    const json = { "content-type": "application/json" };
+    expect((await POST(mk({ ...json, host: "evil.example" }))).status).toBe(403);
+    expect((await POST(mk({ ...json, host: "127.0.0.1:3000", origin: "http://evil.example" }))).status).toBe(403);
+    expect((await POST(mk({ "content-type": "text/plain", host: "127.0.0.1:3000" }))).status).toBe(415);
+    const ok = await POST(mk({ ...json, host: "127.0.0.1:3000", origin: "http://127.0.0.1:3000" }));
+    expect(ok.status).toBe(200);
+    await ok.text();
   });
 });

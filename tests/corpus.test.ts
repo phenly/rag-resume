@@ -156,3 +156,15 @@ describe("profile photo", () => {
     expect(err.detail).toContain("gone.png");
   });
 });
+
+describe("profile field whitelist", () => {
+  it("drops unknown keys from profile and links", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "prof-"));
+    const profile = { name: "X", headline: "h", about: "a", blurb: "b", links: [{ label: "L", url: "https://x.example", secret: 1 }], starterQuestions: [], breakItQuestions: [], privateNote: "nope" };
+    await writeFile(path.join(root, "profile.json"), JSON.stringify(profile));
+    await writeFile(path.join(root, "notes.md"), "n");
+    await writeFile(path.join(root, "corpus.json"), JSON.stringify({ profile: "profile.json", positioningNotes: "notes.md", documents: [] }));
+    const c = await loadCorpus(root);
+    expect(c.profile).toEqual({ name: "X", headline: "h", about: "a", blurb: "b", links: [{ label: "L", url: "https://x.example" }], starterQuestions: [], breakItQuestions: [] });
+  });
+});

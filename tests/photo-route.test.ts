@@ -7,9 +7,16 @@ let impl: () => Promise<unknown> = async () => ({});
 const loadCorpus = { mockReset: () => { impl = async () => ({}); }, mockResolvedValue: (v: unknown) => { impl = async () => v; }, fail: (m: string) => { impl = async () => { throw new Error(m); }; } };
 vi.mock("@/lib/corpus", () => ({ loadCorpus: () => impl(), resolveCorpusDir: () => "dir" }));
 
-import { GET } from "@/app/api/photo/route";
+import { GET as rawGET } from "@/app/api/photo/route";
+import { resetCorpusCache } from "@/lib/corpus-cache";
 
-beforeEach(() => loadCorpus.mockReset());
+const req = (headers: Record<string, string> = {}) => new Request("http://127.0.0.1:3000/api/photo", { headers });
+const GET = (r: Request = req()) => rawGET(r);
+
+beforeEach(() => {
+  loadCorpus.mockReset();
+  resetCorpusCache();
+});
 
 describe("GET /api/photo", () => {
   it("404s when the corpus has no photo", async () => {
@@ -32,10 +39,15 @@ describe("GET /api/photo", () => {
   });
 
   it("returns a generic 500 without leaking paths", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     loadCorpus.fail("boom at /secret/path");
     const res = await GET();
     expect(res.status).toBe(500);
     expect(JSON.stringify(await res.json())).not.toContain("/secret");
+  });
+
+  it("rejects a foreign Host and a mismatched Origin", async () => {
+    expect((await GET(req({ host: "evil.example" }))).status).toBe(403);
+    expect((await GET(req({ host: "127.0.0.1:3000", origin: "http://evil.example" }))).status).toBe(403);
   });
 });
