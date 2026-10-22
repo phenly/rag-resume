@@ -64,10 +64,9 @@
   --radius-bubble-tail: 4px;
   --bubble-user-max: 75%;
   --bubble-answer-max: 85%;
-  --font-size-label: 11px;
   --sidebar-height: calc(var(--panel-height) + var(--sidebar-inset) * 2);
   --sidebar-height-dvh: calc(var(--panel-height-dvh) + var(--sidebar-inset) * 2);
-  --examples-min-height: 160px;
+  --examples-min-height: 200px;
   --examples-scroll-gap: var(--space-2);
   --avatar-size: 96px;
   --banner-height: 80px;

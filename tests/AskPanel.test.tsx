@@ -223,6 +223,19 @@ describe("AskShell + AskPanel", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("focuses the first newly revealed chip and wires aria-controls", () => {
+    const five = ["A?", "B?", "C?", "D?", "E?"];
+    render(<AskShell profileCard={<div />} {...props} starterQuestions={five} />);
+    const more = screen.getByRole("button", { name: "More examples (2)" });
+    expect(document.getElementById(more.getAttribute("aria-controls")!)).not.toBeNull();
+    fireEvent.click(more);
+    expect(screen.getByRole("button", { name: "D?" })).toHaveFocus();
+    const brk = screen.getByRole("button", { name: "Try to break it (1)" });
+    expect(brk.getAttribute("aria-controls")).toBe("break-it-chips");
+    fireEvent.click(brk);
+    expect(screen.getByRole("button", { name: "Break it?" })).toHaveFocus();
+  });
+
   it("renders no toggles for short lists", () => {
     render(<AskShell profileCard={<div />} {...props} breakItQuestions={[]} />);
     expect(screen.queryByRole("button", { name: /more examples|fewer examples|break it/i })).toBeNull();
