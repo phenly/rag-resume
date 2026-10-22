@@ -103,6 +103,7 @@ describe("AskShell + AskPanel", () => {
       ndjson([line({ type: "text", text: "Partial answer" }), line({ type: "error", message: "Cut off." })]),
     );
     render(<AskShell profileCard={<div />} {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Try to break it (1)" }));
     chipAsk("Break it?");
     expect(await screen.findByText("Cut off.")).toBeInTheDocument();
     expect(screen.getByText("Partial answer")).toBeInTheDocument();
@@ -177,5 +178,22 @@ describe("AskShell + AskPanel", () => {
     await waitFor(() =>
       expect(container.querySelector("[aria-live]")).toHaveTextContent("Answer cut off at its length limit."),
     );
+  });
+
+  it("bounds starters to 3 with an expander and hides break-it chips until opened", () => {
+    const five = ["A?", "B?", "C?", "D?", "E?"];
+    render(<AskShell profileCard={<div />} {...props} starterQuestions={five} />);
+    expect(screen.getAllByRole("button", { name: /^[A-E]\?$/ })).toHaveLength(3);
+    expect(screen.queryByRole("button", { name: "Break it?" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "More examples (2)" }));
+    expect(screen.getAllByRole("button", { name: /^[A-E]\?$/ })).toHaveLength(5);
+    expect(screen.getByRole("button", { name: "Fewer examples" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Try to break it (1)" }));
+    expect(screen.getByRole("button", { name: "Break it?" })).toBeInTheDocument();
+  });
+
+  it("renders no toggles for short lists", () => {
+    render(<AskShell profileCard={<div />} {...props} breakItQuestions={[]} />);
+    expect(screen.queryByRole("button", { name: /more examples|fewer examples|break it/i })).toBeNull();
   });
 });

@@ -56,6 +56,10 @@
   --textarea-min-height: 64px;
   --textarea-max-height: 160px;
   --sidebar-inset: 2px;
+  --tap-target-min: 32px;
+  --chip-padding-y: 2px;
+  --chip-padding-x: var(--space-3);
+  --font-size-chip: 12.5px;
   --radius-bubble: 16px;
   --radius-bubble-tail: 4px;
   --bubble-user-max: 75%;
