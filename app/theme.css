@@ -55,7 +55,7 @@
   --panel-min-height: 420px;
   --textarea-min-height: 64px;
   --textarea-max-height: 160px;
-  --scrollbar-gutter: var(--space-1);
+  --sidebar-inset: 2px;
   --radius-bubble: 16px;
   --radius-bubble-tail: 4px;
   --bubble-user-max: 75%;

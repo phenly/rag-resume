@@ -35,4 +35,9 @@ describe("AnswerCard", () => {
     render(<AnswerCard text="partial" status="incomplete" />);
     expect(screen.getByText("The answer hit its length limit.")).toBeInTheDocument();
   });
+
+  it("renders fenced code blocks inside a pre", () => {
+    const { container } = render(<AnswerCard text={"Intro\n\n```\nconst x = 1;\n```"} status="complete" />);
+    expect(container.querySelector("pre code")).toHaveTextContent("const x = 1;");
+  });
 });
