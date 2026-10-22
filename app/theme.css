@@ -47,6 +47,12 @@
   --line-height-tight: 1.35;
   --stroke-thin: 1.5;
   --stroke-medium: 2;
+  --panel-height: calc(100dvh - var(--space-5) * 2);
+  --panel-height-mobile: 100dvh;
+  --panel-min-height: 420px;
+  --textarea-min-height: 64px;
+  --textarea-max-height: 160px;
+  --scrollbar-gutter: var(--space-1);
   --avatar-size: 96px;
   --banner-height: 80px;
 }

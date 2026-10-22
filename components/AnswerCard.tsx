@@ -7,7 +7,7 @@ export type CardStatus = "streaming" | "complete" | "incomplete" | "refused" | "
 export function AnswerCard({ question, text, status, error }: { question: string; text: string; status: CardStatus; error?: string }) {
   const { body, basedOn } = splitBasedOn(text);
   return (
-    <section className={styles.card}>
+    <section className={styles.card} aria-busy={status === "streaming"}>
       <h3 className={styles.question}>{question}</h3>
       {body && (
         <div className={styles.body}>

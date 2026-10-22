@@ -24,6 +24,11 @@ const props = {
   candidateName: "Jordan Example",
 };
 
+function chipAsk(name: string) {
+  fireEvent.click(screen.getByRole("button", { name }));
+  fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+}
+
 let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   fetchMock = vi.fn();
@@ -32,14 +37,20 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("AskPanel", () => {
-  it("clicking a starter submits it", async () => {
+  it("clicking a starter fills the box without submitting", async () => {
     fetchMock.mockResolvedValue(ndjson([line({ type: "text", text: "Hi" }), line({ type: "done", status: "complete" })]));
     render(<AskPanel {...props} />);
     fireEvent.click(screen.getByRole("button", { name: "Starter one?" }));
+    const box = screen.getByRole("textbox") as HTMLTextAreaElement;
+    await waitFor(() => expect(box.value).toBe("Starter one?"));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(box).toHaveFocus();
+    fireEvent.change(box, { target: { value: "Starter one? Edited" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/ask");
-    expect(JSON.parse(init.body)).toEqual({ question: "Starter one?" });
+    expect(JSON.parse(init.body)).toEqual({ question: "Starter one? Edited" });
     await screen.findByText("Hi");
   });
 
@@ -50,7 +61,7 @@ describe("AskPanel", () => {
       ndjson([line({ type: "text", text: "Part" }), line({ type: "done", status: "complete" })], gate),
     );
     render(<AskPanel {...props} />);
-    fireEvent.click(screen.getByRole("button", { name: "Starter one?" }));
+    chipAsk("Starter one?");
     await screen.findByText("Part");
     expect(screen.getByRole("button", { name: "Ask" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Starter two?" })).toBeDisabled();
@@ -58,17 +69,17 @@ describe("AskPanel", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Starter two?" })).toBeEnabled());
   });
 
-  it("stacks answers newest first", async () => {
+  it("stacks answers oldest first, newest last", async () => {
     fetchMock.mockImplementation(async () =>
       ndjson([line({ type: "text", text: "ans" }), line({ type: "done", status: "complete" })]),
     );
     render(<AskPanel {...props} />);
-    fireEvent.click(screen.getByRole("button", { name: "Starter one?" }));
+    chipAsk("Starter one?");
     await waitFor(() => expect(screen.getByRole("button", { name: "Starter two?" })).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Starter two?" }));
+    chipAsk("Starter two?");
     await waitFor(() => expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(2));
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(headings).toEqual(["Starter two?", "Starter one?"]);
+    expect(headings).toEqual(["Starter one?", "Starter two?"]);
   });
 
   it("non-200 shows the server's error on the card", async () => {
@@ -79,7 +90,7 @@ describe("AskPanel", () => {
       }),
     );
     render(<AskPanel {...props} />);
-    fireEvent.click(screen.getByRole("button", { name: "Starter one?" }));
+    chipAsk("Starter one?");
     expect(await screen.findByText("That question is too long.")).toBeInTheDocument();
     expect(screen.queryByRole("status")).toBeNull();
   });
@@ -89,7 +100,7 @@ describe("AskPanel", () => {
       ndjson([line({ type: "text", text: "Partial answer" }), line({ type: "error", message: "Cut off." })]),
     );
     render(<AskPanel {...props} />);
-    fireEvent.click(screen.getByRole("button", { name: "Break it?" }));
+    chipAsk("Break it?");
     expect(await screen.findByText("Cut off.")).toBeInTheDocument();
     expect(screen.getByText("Partial answer")).toBeInTheDocument();
     expect(screen.queryByRole("status")).toBeNull();
@@ -101,14 +112,14 @@ describe("AskPanel", () => {
       ndjson([full.slice(0, 10), full.slice(10), line({ type: "done", status: "complete" })]),
     );
     render(<AskPanel {...props} />);
-    fireEvent.click(screen.getByRole("button", { name: "Starter one?" }));
+    chipAsk("Starter one?");
     expect(await screen.findByText("Split text")).toBeInTheDocument();
   });
 
   it("stream ending without a terminal event shows an error", async () => {
     fetchMock.mockResolvedValue(ndjson([line({ type: "text", text: "Dangling" })]));
     render(<AskPanel {...props} />);
-    fireEvent.click(screen.getByRole("button", { name: "Starter one?" }));
+    chipAsk("Starter one?");
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.getByText("Dangling")).toBeInTheDocument();
     expect(screen.queryByRole("status")).toBeNull();
@@ -129,7 +140,7 @@ describe("AskPanel", () => {
   it("re-enables Ask and chips after an error", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: "Nope." }), { status: 500 }));
     render(<AskPanel {...props} />);
-    fireEvent.click(screen.getByRole("button", { name: "Starter one?" }));
+    chipAsk("Starter one?");
     await screen.findByText("Nope.");
     expect(screen.getByRole("button", { name: "Starter two?" })).toBeEnabled();
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "again" } });
