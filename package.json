@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "ask": "tsx --env-file=.env.local scripts/ask.ts",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests --exclude 'tests/live/**'",
+    "test:live": "RUN_LIVE=1 tsx --env-file=.env.local node_modules/vitest/vitest.mjs run tests/live"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.1.0",
