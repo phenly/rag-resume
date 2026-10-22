@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CorpusError, loadCorpus, resolveCorpusDir } from "@/lib/corpus";
@@ -81,5 +81,78 @@ describe("corpus", () => {
     const c = await loadCorpus(dir);
     expect(c.positioningNotes).not.toContain("me@example.com");
     expect(c.positioningNotes).toContain("[email removed]");
+  });
+});
+
+describe("profile photo", () => {
+  async function photoCorpus(photo: unknown, setup?: (dir: string, outside: string) => Promise<void>) {
+    const root = await mkdtemp(path.join(tmpdir(), "photo-"));
+    const dir = path.join(root, "corpus");
+    const outside = path.join(root, "outside");
+    await mkdir(dir);
+    await mkdir(outside);
+    const profile: Record<string, unknown> = { name: "X", headline: "", about: "", links: [], blurb: "", starterQuestions: [], breakItQuestions: [] };
+    if (photo !== undefined) profile.photo = photo;
+    await writeFile(path.join(dir, "profile.json"), JSON.stringify(profile));
+    await writeFile(path.join(dir, "notes.md"), "n");
+    await writeFile(path.join(dir, "corpus.json"), JSON.stringify({ profile: "profile.json", positioningNotes: "notes.md", documents: [] }));
+    await setup?.(dir, outside);
+    return { dir, root };
+  }
+
+  it("sample corpus has a validated photoPath", async () => {
+    const c = await loadCorpus(sampleDir);
+    expect(c.profile.photo).toBe("placeholder-avatar.png");
+    expect(c.photoPath?.endsWith("/sample-corpus/placeholder-avatar.png")).toBe(true);
+    expect(path.isAbsolute(c.photoPath!)).toBe(true);
+  });
+
+  it("leaves photoPath undefined when there is no photo", async () => {
+    const { dir } = await photoCorpus(undefined);
+    expect((await loadCorpus(dir)).photoPath).toBeUndefined();
+  });
+
+  it("accepts an uppercase extension", async () => {
+    const { dir } = await photoCorpus("me.PNG", async (d) => writeFile(path.join(d, "me.PNG"), "x"));
+    expect((await loadCorpus(dir)).photoPath?.endsWith("/me.PNG")).toBe(true);
+  });
+
+  it("rejects an empty or non-string photo", async () => {
+    for (const bad of ["", "  ", 5]) {
+      const { dir } = await photoCorpus(bad);
+      await expect(loadCorpus(dir)).rejects.toBeInstanceOf(CorpusError);
+    }
+  });
+
+  it("rejects ../ escapes", async () => {
+    const { dir } = await photoCorpus("../outside/outside.png", async (_d, o) => writeFile(path.join(o, "outside.png"), "x"));
+    await expect(loadCorpus(dir)).rejects.toBeInstanceOf(CorpusError);
+  });
+
+  it("rejects a symlink pointing outside the corpus", async () => {
+    const { dir } = await photoCorpus("link.png", async (d, o) => {
+      await writeFile(path.join(o, "real.png"), "x");
+      await symlink(path.join(o, "real.png"), path.join(d, "link.png"));
+    });
+    await expect(loadCorpus(dir)).rejects.toBeInstanceOf(CorpusError);
+  });
+
+  it("rejects unsupported extensions", async () => {
+    const { dir } = await photoCorpus("me.svg", async (d) => writeFile(path.join(d, "me.svg"), "<svg/>"));
+    await expect(loadCorpus(dir)).rejects.toBeInstanceOf(CorpusError);
+  });
+
+  it("rejects a directory named like an image", async () => {
+    const { dir } = await photoCorpus("me.png", async (d) => mkdir(path.join(d, "me.png")));
+    await expect(loadCorpus(dir)).rejects.toBeInstanceOf(CorpusError);
+  });
+
+  it("missing file: path only in detail", async () => {
+    const { dir } = await photoCorpus("gone.png");
+    const err = await loadCorpus(dir).catch((e) => e);
+    expect(err).toBeInstanceOf(CorpusError);
+    expect(err.message).not.toContain(dir);
+    expect(err.message).not.toContain("gone.png");
+    expect(err.detail).toContain("gone.png");
   });
 });

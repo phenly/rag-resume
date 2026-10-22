@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { redactContacts } from "./redact";
 
@@ -8,6 +8,7 @@ export type Profile = {
   about: string;
   links: { label: string; url: string }[];
   blurb: string; // "what is this" text under the links
+  photo?: string; // path relative to the corpus dir
   starterQuestions: string[];
   breakItQuestions: string[];
 };
@@ -16,6 +17,7 @@ export type Corpus = {
   profile: Profile;
   positioningNotes: string;
   documents: CorpusDocument[];
+  photoPath?: string; // absolute real path, validated; undefined when profile has no photo
 };
 
 export class CorpusError extends Error {
@@ -94,7 +96,34 @@ function validateProfile(p: unknown): Profile {
     !p.links.every((l) => isObj(l) && isStr(l.label) && isStr(l.url))
   )
     throw new CorpusError("profile.json: links must be an array of {label, url}");
+  if (p.photo !== undefined && !isNonEmpty(p.photo))
+    throw new CorpusError("profile.json: photo must be a non-empty string");
   return p as unknown as Profile;
+}
+
+const PHOTO_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
+
+/** Resolve the photo to a real path that must live inside the corpus dir. */
+async function resolvePhoto(dir: string, photo: string): Promise<string> {
+  const full = path.resolve(dir, photo);
+  if (!PHOTO_EXTS.has(path.extname(full).toLowerCase()))
+    throw new CorpusError("Corpus profile photo must be a .jpg, .jpeg, .png or .webp file", { detail: full });
+  let realDir: string;
+  let real: string;
+  try {
+    realDir = await realpath(dir);
+    real = await realpath(full);
+  } catch {
+    throw new CorpusError("Corpus profile photo is missing or unreadable", { detail: full });
+  }
+  const rel = path.relative(realDir, real);
+  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel))
+    throw new CorpusError("Corpus profile photo must be inside the corpus folder", { detail: real });
+  if (!PHOTO_EXTS.has(path.extname(real).toLowerCase()))
+    throw new CorpusError("Corpus profile photo must be a .jpg, .jpeg, .png or .webp file", { detail: real });
+  if (!(await stat(real)).isFile())
+    throw new CorpusError("Corpus profile photo must be a regular file", { detail: real });
+  return real;
 }
 
 export async function loadCorpus(dir: string): Promise<Corpus> {
@@ -113,5 +142,6 @@ export async function loadCorpus(dir: string): Promise<Corpus> {
     const raw = await readText(dir, entry.path, `document "${entry.title}"`, entry.title);
     documents.push({ title: entry.title, text: redactContacts(raw) });
   }
-  return { profile, positioningNotes, documents };
+  const photoPath = profile.photo ? await resolvePhoto(dir, profile.photo) : undefined;
+  return { profile, positioningNotes, documents, photoPath };
 }
