@@ -15,13 +15,20 @@ async function Profile() {
   let photoUrl: string | undefined;
   try {
     ({ profile, photoPath } = await getCorpus());
-    // Version token busts the browser cache when the photo file changes (the route ignores it).
-    if (photoPath) photoUrl = `/api/photo?v=${await photoVersion(photoPath)}`;
   } catch (err) {
     // Log details server-side only; nothing from err reaches the page.
     // stderr, not console: React replays server console calls (with paths) into the browser in dev.
     logServerError("Failed to load corpus", err);
     return <p className={styles.problem}>The profile could not be loaded. Check the server console for details.</p>;
+  }
+  if (photoPath) {
+    try {
+      // Version token busts the browser cache when the photo file changes (the route ignores it).
+      photoUrl = `/api/photo?v=${await photoVersion(photoPath)}`;
+    } catch (err) {
+      // A photo-only failure must not take down the page; fall back to initials.
+      logServerError("Failed to version photo", err);
+    }
   }
   return (
     <>

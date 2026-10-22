@@ -35,4 +35,14 @@ describe("photoVersion", () => {
     utimesSync(p, 1000, 1000);
     expect(await photoVersion(p)).not.toBe(before);
   });
+
+  it("differs for the same size and mtime under a different path", async () => {
+    const a = path.join(dir, "d1.jpg");
+    const b = path.join(dir, "d2.jpg");
+    for (const f of [a, b]) {
+      writeFileSync(f, "abc");
+      utimesSync(f, 1000, 1000);
+    }
+    expect(await photoVersion(a)).not.toBe(await photoVersion(b));
+  });
 });
