@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AskPanel } from "@/components/AskPanel";
+import { AskShell } from "@/components/AskShell";
 
 const enc = new TextEncoder();
 const line = (o: object) => JSON.stringify(o) + "\n";
@@ -36,10 +36,10 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-describe("AskPanel", () => {
+describe("AskShell + AskPanel", () => {
   it("clicking a starter fills the box without submitting", async () => {
     fetchMock.mockResolvedValue(ndjson([line({ type: "text", text: "Hi" }), line({ type: "done", status: "complete" })]));
-    render(<AskPanel {...props} />);
+    render(<AskShell profileCard={<div />} {...props} />);
     fireEvent.click(screen.getByRole("button", { name: "Starter one?" }));
     const box = screen.getByRole("textbox") as HTMLTextAreaElement;
     await waitFor(() => expect(box.value).toBe("Starter one?"));
@@ -60,7 +60,7 @@ describe("AskPanel", () => {
     fetchMock.mockResolvedValue(
       ndjson([line({ type: "text", text: "Part" }), line({ type: "done", status: "complete" })], gate),
     );
-    render(<AskPanel {...props} />);
+    render(<AskShell profileCard={<div />} {...props} />);
     chipAsk("Starter one?");
     await screen.findByText("Part");
     expect(screen.getByRole("button", { name: "Ask" })).toBeDisabled();
@@ -69,17 +69,20 @@ describe("AskPanel", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Starter two?" })).toBeEnabled());
   });
 
-  it("stacks answers oldest first, newest last", async () => {
+  it("renders each exchange as a user bubble then an answer bubble, oldest first", async () => {
     fetchMock.mockImplementation(async () =>
       ndjson([line({ type: "text", text: "ans" }), line({ type: "done", status: "complete" })]),
     );
-    render(<AskPanel {...props} />);
+    render(<AskShell profileCard={<div />} {...props} />);
     chipAsk("Starter one?");
     await waitFor(() => expect(screen.getByRole("button", { name: "Starter two?" })).toBeEnabled());
     chipAsk("Starter two?");
-    await waitFor(() => expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(2));
-    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(headings).toEqual(["Starter one?", "Starter two?"]);
+    await waitFor(() => expect(document.querySelectorAll("[data-message]")).toHaveLength(4));
+    const msgs = Array.from(document.querySelectorAll("[data-message]"));
+    expect(msgs.map((m) => m.getAttribute("data-message"))).toEqual(["user", "answer", "user", "answer"]);
+    expect(msgs[0]).toHaveTextContent("Starter one?");
+    expect(msgs[2]).toHaveTextContent("Starter two?");
+    expect(msgs[1]).toHaveTextContent("ans");
   });
 
   it("non-200 shows the server's error on the card", async () => {
@@ -89,7 +92,7 @@ describe("AskPanel", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    render(<AskPanel {...props} />);
+    render(<AskShell profileCard={<div />} {...props} />);
     chipAsk("Starter one?");
     expect(await screen.findByText("That question is too long.")).toBeInTheDocument();
     expect(screen.queryByRole("status")).toBeNull();
@@ -99,7 +102,7 @@ describe("AskPanel", () => {
     fetchMock.mockResolvedValue(
       ndjson([line({ type: "text", text: "Partial answer" }), line({ type: "error", message: "Cut off." })]),
     );
-    render(<AskPanel {...props} />);
+    render(<AskShell profileCard={<div />} {...props} />);
     chipAsk("Break it?");
     expect(await screen.findByText("Cut off.")).toBeInTheDocument();
     expect(screen.getByText("Partial answer")).toBeInTheDocument();
@@ -111,14 +114,14 @@ describe("AskPanel", () => {
     fetchMock.mockResolvedValue(
       ndjson([full.slice(0, 10), full.slice(10), line({ type: "done", status: "complete" })]),
     );
-    render(<AskPanel {...props} />);
+    render(<AskShell profileCard={<div />} {...props} />);
     chipAsk("Starter one?");
     expect(await screen.findByText("Split text")).toBeInTheDocument();
   });
 
   it("stream ending without a terminal event shows an error", async () => {
     fetchMock.mockResolvedValue(ndjson([line({ type: "text", text: "Dangling" })]));
-    render(<AskPanel {...props} />);
+    render(<AskShell profileCard={<div />} {...props} />);
     chipAsk("Starter one?");
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.getByText("Dangling")).toBeInTheDocument();
@@ -127,7 +130,7 @@ describe("AskPanel", () => {
 
   it("Enter submits and Shift+Enter does not", async () => {
     fetchMock.mockResolvedValue(ndjson([line({ type: "done", status: "complete" })]));
-    render(<AskPanel {...props} />);
+    render(<AskShell profileCard={<div />} {...props} />);
     const box = screen.getByRole("textbox");
     fireEvent.change(box, { target: { value: "Typed question" } });
     fireEvent.keyDown(box, { key: "Enter", shiftKey: true });
@@ -139,7 +142,7 @@ describe("AskPanel", () => {
 
   it("re-enables Ask and chips after an error", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: "Nope." }), { status: 500 }));
-    render(<AskPanel {...props} />);
+    render(<AskShell profileCard={<div />} {...props} />);
     chipAsk("Starter one?");
     await screen.findByText("Nope.");
     expect(screen.getByRole("button", { name: "Starter two?" })).toBeEnabled();
@@ -148,7 +151,7 @@ describe("AskPanel", () => {
   });
 
   it("Enter during IME composition does not submit", () => {
-    render(<AskPanel {...props} />);
+    render(<AskShell profileCard={<div />} {...props} />);
     const box = screen.getByRole("textbox");
     fireEvent.change(box, { target: { value: "にほん" } });
     fireEvent.keyDown(box, { key: "Enter", isComposing: true });
@@ -156,7 +159,7 @@ describe("AskPanel", () => {
   });
 
   it("clicking the same chip twice keeps focus in the box and typing does not move the caret", () => {
-    render(<AskPanel {...props} />);
+    render(<AskShell profileCard={<div />} {...props} />);
     const box = screen.getByRole("textbox") as HTMLTextAreaElement;
     fireEvent.click(screen.getByRole("button", { name: "Starter one?" }));
     fireEvent.click(screen.getByRole("button", { name: "Starter one?" }));
@@ -169,7 +172,7 @@ describe("AskPanel", () => {
 
   it("announces a status-aware message when an answer ends", async () => {
     fetchMock.mockResolvedValue(ndjson([line({ type: "done", status: "incomplete" })]));
-    const { container } = render(<AskPanel {...props} />);
+    const { container } = render(<AskShell profileCard={<div />} {...props} />);
     chipAsk("Starter one?");
     await waitFor(() =>
       expect(container.querySelector("[aria-live]")).toHaveTextContent("Answer cut off at its length limit."),

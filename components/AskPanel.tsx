@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { flushSync } from "react-dom";
+import { Fragment, useEffect, useRef, useState, type RefObject } from "react";
 import { createEventParser } from "@/lib/events";
 import { AnswerCard, type CardStatus } from "./AnswerCard";
 import styles from "./AskPanel.module.css";
@@ -17,32 +16,28 @@ const ANNOUNCEMENTS = {
 
 type Card = { id: number; question: string; text: string; status: CardStatus; error?: string };
 
-export function AskPanel({ starterQuestions, breakItQuestions, candidateName }: { starterQuestions: string[]; breakItQuestions: string[]; candidateName: string }) {
-  const [input, setInput] = useState("");
+type AskPanelProps = {
+  candidateName: string;
+  input: string;
+  onInputChange: (value: string) => void;
+  busy: boolean;
+  onBusyChange: (busy: boolean) => void;
+  inputRef: RefObject<HTMLTextAreaElement | null>;
+};
+
+export function AskPanel({ candidateName, input, onInputChange, busy, onBusyChange, inputRef }: AskPanelProps) {
   const [cards, setCards] = useState<Card[]>([]);
-  const [busy, setBusy] = useState(false);
   const [announce, setAnnounce] = useState("");
   const nextId = useRef(1);
   const listRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
   const stickToBottom = useRef(true);
+  const firstName = candidateName.trim().split(/\s+/)[0] || candidateName;
 
   // Auto-scroll as cards change, but only if the reader is already near the bottom.
   useEffect(() => {
     const el = listRef.current;
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
   }, [cards]);
-
-  // Chips fill the box, then focus it with the caret at the end. Done directly
-  // (not in an effect) so it also works when the chip text equals the current input.
-  function fill(q: string) {
-    flushSync(() => setInput(q));
-    const el = inputRef.current;
-    if (el) {
-      el.focus();
-      el.setSelectionRange(el.value.length, el.value.length);
-    }
-  }
 
   function onListScroll() {
     const el = listRef.current;
@@ -57,8 +52,8 @@ export function AskPanel({ starterQuestions, breakItQuestions, candidateName }: 
       setCards((cs) => cs.map((c) => (c.id === id ? patch(c) : c)));
     stickToBottom.current = true;
     setAnnounce("");
-    setBusy(true);
-    setInput("");
+    onBusyChange(true);
+    onInputChange("");
     setCards((cs) => [...cs, { id, question, text: "", status: "streaming" }]);
 
     let terminal = false;
@@ -107,7 +102,7 @@ export function AskPanel({ starterQuestions, breakItQuestions, candidateName }: 
       );
     } finally {
       setAnnounce(ANNOUNCEMENTS[outcome]);
-      setBusy(false);
+      onBusyChange(false);
     }
   }
 
@@ -122,29 +117,19 @@ export function AskPanel({ starterQuestions, breakItQuestions, candidateName }: 
         onScroll={onListScroll}
       >
         {cards.length === 0 && (
-          <p className={styles.empty}>Ask anything about {candidateName} &mdash; or start from an example below.</p>
+          <p className={styles.empty}>Ask anything about {candidateName} &mdash; or pick an example question to start.</p>
         )}
         {cards.map((c) => (
-          <AnswerCard key={c.id} question={c.question} text={c.text} status={c.status} error={c.error} />
+          <Fragment key={c.id}>
+            <div className={styles.userBubble} data-message="user">
+              <p className={styles.userLabel}>You</p>
+              <p className={styles.userText}>{c.question}</p>
+            </div>
+            <AnswerCard label={firstName} text={c.text} status={c.status} error={c.error} />
+          </Fragment>
         ))}
       </div>
       <div className={styles.announcer} aria-live="polite">{announce}</div>
-
-      <div className={styles.chipArea}>
-        <div className={styles.chips} role="group" aria-label="Example questions">
-          {starterQuestions.map((q) => (
-            <button key={q} type="button" className={styles.chip} disabled={busy} onClick={() => fill(q)}>{q}</button>
-          ))}
-        </div>
-        {breakItQuestions.length > 0 && (
-          <div className={styles.chips} role="group" aria-label="Try to break it">
-            <span className={styles.groupLabel}>Try to break it</span>
-            {breakItQuestions.map((q) => (
-              <button key={q} type="button" className={`${styles.chip} ${styles.breakChip}`} disabled={busy} onClick={() => fill(q)}>{q}</button>
-            ))}
-          </div>
-        )}
-      </div>
 
       <form
         className={styles.form}
@@ -162,7 +147,7 @@ export function AskPanel({ starterQuestions, breakItQuestions, candidateName }: 
           maxLength={1000}
           value={input}
           placeholder={`What would you like to know about ${candidateName}?`}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => onInputChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();

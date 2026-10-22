@@ -1,5 +1,5 @@
-.card { background: var(--color-card); border-radius: var(--radius-card); box-shadow: var(--shadow-card); padding: var(--space-4); }
-.question { margin: 0 0 var(--space-2); font-size: var(--font-size-heading); }
+.card { align-self: flex-start; max-width: var(--bubble-answer-max); min-width: 0; overflow-wrap: anywhere; background: var(--color-card); border-radius: var(--radius-bubble); border-bottom-left-radius: var(--radius-bubble-tail); box-shadow: var(--shadow-card); padding: var(--space-3) var(--space-4); }
+.label { margin: 0 0 var(--space-1); font-size: var(--font-size-label); font-weight: 600; color: var(--color-muted); }
 .body > :first-child { margin-top: 0; }
 .body > :last-child { margin-bottom: 0; }
 .muted { margin: var(--space-3) 0 0; font-size: var(--font-size-small); color: var(--color-muted); }

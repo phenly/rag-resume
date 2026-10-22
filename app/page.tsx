@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { connection } from "next/server";
 import { loadCorpus, resolveCorpusDir } from "@/lib/corpus";
 import { ProfileCard } from "@/components/ProfileCard";
-import { AskPanel } from "@/components/AskPanel";
+import { AskShell } from "@/components/AskShell";
 import styles from "./page.module.css";
 
 async function Profile() {
@@ -21,17 +21,13 @@ async function Profile() {
   return (
     <>
       <title>{`Ask about ${profile.name}`}</title>
-      <aside className={styles.sidebar}>
-        {/* ProfileCard is a client component: strip the photo filename before it reaches the browser. */}
-        <ProfileCard profile={{ ...profile, photo: undefined }} photoUrl={photoPath ? "/api/photo" : undefined} />
-      </aside>
-      <section className={styles.main}>
-        <AskPanel
-          starterQuestions={profile.starterQuestions}
-          breakItQuestions={profile.breakItQuestions}
-          candidateName={profile.name}
-        />
-      </section>
+      {/* ProfileCard is a client component: strip the photo filename before it reaches the browser. */}
+      <AskShell
+        profileCard={<ProfileCard profile={{ ...profile, photo: undefined }} photoUrl={photoPath ? "/api/photo" : undefined} />}
+        starterQuestions={profile.starterQuestions}
+        breakItQuestions={profile.breakItQuestions}
+        candidateName={profile.name}
+      />
     </>
   );
 }

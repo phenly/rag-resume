@@ -56,6 +56,13 @@
   --textarea-min-height: 64px;
   --textarea-max-height: 160px;
   --scrollbar-gutter: var(--space-1);
+  --radius-bubble: 16px;
+  --radius-bubble-tail: 4px;
+  --bubble-user-max: 75%;
+  --bubble-answer-max: 85%;
+  --font-size-label: 11px;
+  --sidebar-max-height: calc(100vh - var(--space-5) * 2);
+  --sidebar-max-height-dvh: calc(100dvh - var(--space-5) * 2);
   --avatar-size: 96px;
   --banner-height: 80px;
 }

@@ -1,8 +1,5 @@
 .page { display: grid; grid-template-columns: var(--layout-sidebar-width) minmax(0, 1fr); gap: var(--space-5); align-items: start; max-width: var(--layout-max-width); margin: 0 auto; padding: var(--space-5) var(--space-4); }
-.sidebar { position: sticky; top: var(--space-4); }
-.main { min-width: 0; position: relative; }
 .problem { grid-column: 1 / -1; color: var(--color-muted); }
 @media (max-width: 768px) {
   .page { grid-template-columns: minmax(0, 1fr); }
-  .sidebar { position: static; }
 }

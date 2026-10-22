@@ -6,7 +6,7 @@ describe("AnswerCard", () => {
   it("never renders images or live links from answers", () => {
     const { container } = render(
       <AnswerCard
-        question="Q?"
+       
         text="![x](https://evil.example/a.png) [y](https://evil.example)"
         status="complete"
       />,
@@ -18,21 +18,21 @@ describe("AnswerCard", () => {
 
   it("renders Based on line only when complete", () => {
     const text = "Body text.\n\nBased on: Doc A";
-    const { rerender } = render(<AnswerCard question="Q?" text={text} status="streaming" />);
+    const { rerender } = render(<AnswerCard text={text} status="streaming" />);
     expect(screen.queryByText(/Based on/)).toBeNull();
-    rerender(<AnswerCard question="Q?" text={text} status="complete" />);
+    rerender(<AnswerCard text={text} status="complete" />);
     expect(screen.getByText(/Based on: Doc A/)).toBeInTheDocument();
   });
 
   it("shows a spinner only while streaming", () => {
-    const { rerender } = render(<AnswerCard question="Q?" text="" status="streaming" />);
+    const { rerender } = render(<AnswerCard text="" status="streaming" />);
     expect(screen.getByRole("status")).toBeInTheDocument();
-    rerender(<AnswerCard question="Q?" text="x" status="complete" />);
+    rerender(<AnswerCard text="x" status="complete" />);
     expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("shows a note for incomplete answers", () => {
-    render(<AnswerCard question="Q?" text="partial" status="incomplete" />);
+    render(<AnswerCard text="partial" status="incomplete" />);
     expect(screen.getByText("The answer hit its length limit.")).toBeInTheDocument();
   });
 });
