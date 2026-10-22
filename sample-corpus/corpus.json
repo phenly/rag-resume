@@ -1,0 +1,9 @@
+{
+  "profile": "profile.json",
+  "positioningNotes": "positioning-notes.md",
+  "documents": [
+    { "title": "Career inventory", "path": "inventory.md" },
+    { "title": "Story bank", "path": "story-bank.md" },
+    { "title": "LinkedIn profile", "path": "linkedin-profile.md" }
+  ]
+}
