@@ -16,3 +16,17 @@ describe("splitBasedOn", () => {
     expect(splitBasedOn("Body\nBased on: A, B  \n")).toEqual({ body: "Body", basedOn: "A, B" });
   });
 });
+
+describe("splitBasedOn edge cases", () => {
+  it("empty Based on line gives null and is removed", () => {
+    expect(splitBasedOn("Body\n\nBased on:")).toEqual({ body: "Body", basedOn: null });
+  });
+  it("accepts emphasis variants", () => {
+    for (const l of ["**Based on:** A, B", "*Based on:* A, B", "_Based on:_ A, B", "**Based on: A, B**"]) {
+      expect(splitBasedOn(`Body\n${l}`)).toEqual({ body: "Body", basedOn: "A, B" });
+    }
+  });
+  it("trims the body on the no-match path", () => {
+    expect(splitBasedOn("  Body\n\n")).toEqual({ body: "Body", basedOn: null });
+  });
+});
