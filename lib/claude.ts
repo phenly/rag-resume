@@ -30,6 +30,13 @@ export function lastUsage(): Anthropic.Beta.BetaUsage | null {
   return last;
 }
 
+export type AskStats = { eventTypes: string[]; deltaTypes: string[]; words: number };
+let stats: AskStats = { eventTypes: [], deltaTypes: [], words: 0 };
+/** Diagnostics for the most recent stream: stream event/delta types seen and visible word count. */
+export function lastStats(): AskStats {
+  return stats;
+}
+
 const CUT_OFF = "The answer was cut off. Try again.";
 
 export async function* streamAnswer(
@@ -40,34 +47,56 @@ export async function* streamAnswer(
   signal?: AbortSignal,
 ): AsyncGenerator<AskEvent> {
   last = null;
-  const stream = client.beta.messages.stream({
-    model: config.model,
-    max_tokens: 4000,
-    system,
-    messages: [{ role: "user", content: question }],
-    output_config: { effort: config.effort },
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
-  });
-  const onAbort = () => stream.abort();
+  const events = new Set<string>();
+  const deltas = new Set<string>();
+  let visible = "";
+  stats = { eventTypes: [], deltaTypes: [], words: 0 };
+  if (signal?.aborted) return; // client already gone: never start the API call
+
+  let stream: ReturnType<Anthropic["beta"]["messages"]["stream"]> | undefined;
+  const onAbort = () => stream?.abort();
   signal?.addEventListener("abort", onAbort);
+  let finished = false;
   try {
+    stream = client.beta.messages.stream({
+      model: config.model,
+      max_tokens: 4000,
+      system,
+      messages: [{ role: "user", content: question }],
+      output_config: { effort: config.effort },
+      betas: ["server-side-fallback-2026-07-01"],
+      fallbacks: "default",
+    });
     for await (const ev of stream) {
-      if (ev.type === "content_block_delta" && ev.delta.type === "text_delta") {
-        yield { type: "text", text: ev.delta.text };
+      events.add(ev.type);
+      if (ev.type === "content_block_delta") {
+        deltas.add(ev.delta.type);
+        if (ev.delta.type === "text_delta") {
+          visible += ev.delta.text;
+          yield { type: "text", text: ev.delta.text };
+        }
       }
     }
     const msg = await stream.finalMessage();
     last = msg.usage;
+    finished = true;
     if (msg.stop_reason === "refusal") yield { type: "done", status: "refused" };
-    else if (msg.stop_reason === "max_tokens") yield { type: "done", status: "incomplete" };
-    else yield { type: "done", status: "complete" };
+    else if (msg.stop_reason === "end_turn" || msg.stop_reason === "stop_sequence")
+      yield { type: "done", status: "complete" };
+    else yield { type: "done", status: "incomplete" };
   } catch (err) {
+    finished = true; // abort below only matters if the client left
     if (signal?.aborted) return; // client left; nobody is listening
     console.error("[ask] stream failed:", err);
     yield { type: "error", message: CUT_OFF };
   } finally {
     signal?.removeEventListener("abort", onAbort);
-    if (signal?.aborted) stream.abort();
+    // Consumer stopped early (generator return/cancel) or client aborted: stop billing.
+    if (!finished || signal?.aborted) stream?.abort();
+    stats = {
+      eventTypes: [...events],
+      deltaTypes: [...deltas],
+      words: visible.trim() ? visible.trim().split(/\s+/).length : 0,
+    };
   }
 }

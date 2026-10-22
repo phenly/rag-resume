@@ -21,23 +21,32 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return json(400, "Send a JSON body with a question.");
   }
-  if (typeof question !== "string" || question.trim() === "") {
-    return json(400, "Ask a question first.");
-  }
-  if (question.length > MAX_QUESTION_CHARS) {
+  if (typeof question !== "string") return json(400, "Ask a question first.");
+  const q = question.trim();
+  if (q === "") return json(400, "Ask a question first.");
+  if (q.length > MAX_QUESTION_CHARS) {
     return json(400, `Keep the question under ${MAX_QUESTION_CHARS} characters.`);
   }
 
   try {
     const config = readAskConfig();
     const system = await getSystem();
-    const events = streamAnswer(question.trim(), system, config, undefined, request.signal);
+    const events = streamAnswer(q, system, config, undefined, request.signal);
     const encoder = new TextEncoder();
     const body = new ReadableStream<Uint8Array>({
       async pull(controller) {
-        const { value, done } = await events.next();
-        if (done) controller.close();
-        else controller.enqueue(encoder.encode(encodeEvent(value)));
+        try {
+          const { value, done } = await events.next();
+          if (done) controller.close();
+          else controller.enqueue(encoder.encode(encodeEvent(value)));
+        } catch (err) {
+          // Never error the stream without a terminal event.
+          console.error("[ask] stream generator threw:", err);
+          controller.enqueue(
+            encoder.encode(encodeEvent({ type: "error", message: "The answer was cut off. Try again." })),
+          );
+          controller.close();
+        }
       },
       cancel() {
         void events.return(undefined);

@@ -9,7 +9,7 @@ const fakeEvents: AskEvent[] = [
   { type: "done", status: "complete" },
 ];
 
-async function loadRoute(opts: { configThrows?: boolean } = {}) {
+async function loadRoute(opts: { configThrows?: boolean; genThrows?: boolean } = {}) {
   vi.resetModules();
   vi.doMock("@/lib/claude", async () => {
     class ConfigError extends Error {}
@@ -20,6 +20,7 @@ async function loadRoute(opts: { configThrows?: boolean } = {}) {
         return { apiKey: "k", model: "m", effort: "medium" };
       },
       streamAnswer: async function* () {
+        if (opts.genThrows) throw new Error("gen boom");
         for (const e of fakeEvents) yield e;
       },
     };
@@ -65,6 +66,24 @@ describe("POST /api/ask", () => {
     const text = await res.text();
     expect(text.endsWith("\n")).toBe(true);
     expect(createEventParser()(text)).toEqual(fakeEvents);
+  });
+
+  it("ends the body with an error event if the generator throws", async () => {
+    const { POST } = await loadRoute({ genThrows: true });
+    const res = await POST(post({ question: "hi" }));
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text.endsWith("\n")).toBe(true);
+    expect(createEventParser()(text)).toEqual([
+      { type: "error", message: "The answer was cut off. Try again." },
+    ]);
+  });
+
+  it("trims before checking length", async () => {
+    const { POST } = await loadRoute();
+    const res = await POST(post({ question: "  " + "x".repeat(1000) + "  " }));
+    expect(res.status).toBe(200);
+    await res.text();
   });
 
   it("returns 500 with a safe message when the key is missing", async () => {

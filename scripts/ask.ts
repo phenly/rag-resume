@@ -1,6 +1,6 @@
 import { loadCorpus, resolveCorpusDir } from "../lib/corpus";
 import { buildSystemPrompt } from "../lib/prompt";
-import { lastUsage, readAskConfig, streamAnswer } from "../lib/claude";
+import { lastStats, lastUsage, readAskConfig, streamAnswer } from "../lib/claude";
 import type { AskEvent } from "../lib/events";
 
 async function main(): Promise<number> {
@@ -27,6 +27,8 @@ async function main(): Promise<number> {
       output_tokens: u?.output_tokens,
     }),
   );
+  const st = lastStats();
+  console.log("visible words:", st.words, "| event types:", st.eventTypes.join(","), "| delta types:", st.deltaTypes.join(","));
   return terminal?.type === "done" ? 0 : 1;
 }
 
