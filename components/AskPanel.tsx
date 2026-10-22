@@ -90,7 +90,7 @@ export function AskPanel({ starterQuestions, breakItQuestions, candidateName }: 
           placeholder={`What would you like to know about ${candidateName}?`}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               void submit(input);
             }

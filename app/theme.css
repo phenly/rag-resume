@@ -35,7 +35,18 @@
   --shadow-card: 0 0 0 1px var(--color-border);
   --layout-max-width: 1128px;
   --layout-sidebar-width: 320px;
-  --layout-breakpoint-note: 768px;
+  /* Mobile breakpoint is 768px; media queries cannot use variables, so it is a literal there. */
+  --layout-article-width: 820px;
+  --avatar-font-size: 34px;
+  --avatar-border-width: 4px;
+  --spinner-size: 16px;
+  --spinner-border-width: 2px;
+  --spinner-duration: 0.8s;
+  --font-size-diagram: 15px;
+  --font-size-diagram-note: 12px;
+  --line-height-tight: 1.35;
+  --stroke-thin: 1.5;
+  --stroke-medium: 2;
   --avatar-size: 96px;
   --banner-height: 80px;
 }

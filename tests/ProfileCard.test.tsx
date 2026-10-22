@@ -25,3 +25,22 @@ describe("ProfileCard", () => {
     expect(screen.getByRole("link", { name: /how this works/i })).toHaveAttribute("href", "/how-it-works");
   });
 });
+
+describe("ProfileCard link safety", () => {
+  it("renders non-http links as plain text without an href", () => {
+    render(
+      <ProfileCard
+        profile={{
+          ...profile,
+          links: [
+            { label: "Evil", url: "javascript:alert(1)" },
+            { label: "Good", url: "https://example.com/g" },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText("Evil")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Evil" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Good" })).toHaveAttribute("href", "https://example.com/g");
+  });
+});

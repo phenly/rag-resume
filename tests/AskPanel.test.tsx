@@ -125,4 +125,22 @@ describe("AskPanel", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ question: "Typed question" });
   });
+
+  it("re-enables Ask and chips after an error", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: "Nope." }), { status: 500 }));
+    render(<AskPanel {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Starter one?" }));
+    await screen.findByText("Nope.");
+    expect(screen.getByRole("button", { name: "Starter two?" })).toBeEnabled();
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "again" } });
+    expect(screen.getByRole("button", { name: "Ask" })).toBeEnabled();
+  });
+
+  it("Enter during IME composition does not submit", () => {
+    render(<AskPanel {...props} />);
+    const box = screen.getByRole("textbox");
+    fireEvent.change(box, { target: { value: "にほん" } });
+    fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

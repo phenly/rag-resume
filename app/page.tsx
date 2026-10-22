@@ -11,8 +11,10 @@ async function Profile() {
   let profile;
   try {
     ({ profile } = await loadCorpus(resolveCorpusDir()));
-  } catch {
-    // Never leak paths or stack traces to the browser.
+  } catch (err) {
+    // Log details server-side only; nothing from err reaches the page.
+    const e = err as { message?: string; entryTitle?: string; detail?: string };
+    console.error("Failed to load corpus:", e?.message ?? String(err), e?.entryTitle ? `(entry: ${e.entryTitle})` : "", e?.detail ? `(detail: ${e.detail})` : "");
     return <p className={styles.problem}>The profile could not be loaded. Check the server console for details.</p>;
   }
   return (

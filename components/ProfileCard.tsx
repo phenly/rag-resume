@@ -10,6 +10,15 @@ function initials(name: string): string {
   return (first + last).toUpperCase();
 }
 
+function isSafeUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export function ProfileCard({ profile }: { profile: Profile }) {
   return (
     <article className={styles.card}>
@@ -28,7 +37,11 @@ export function ProfileCard({ profile }: { profile: Profile }) {
             <ul className={styles.links}>
               {profile.links.map((l) => (
                 <li key={l.url}>
-                  <a href={l.url} target="_blank" rel="noopener noreferrer">{l.label}</a>
+                  {isSafeUrl(l.url) ? (
+                    <a href={l.url} target="_blank" rel="noopener noreferrer">{l.label}</a>
+                  ) : (
+                    <span>{l.label}</span>
+                  )}
                 </li>
               ))}
             </ul>
