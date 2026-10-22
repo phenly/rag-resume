@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "ask": "tsx --env-file=.env.local scripts/ask.ts",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
