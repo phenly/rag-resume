@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { connection } from "next/server";
 import { getCorpus } from "@/lib/corpus-cache";
 import { logServerError } from "@/lib/log";
+import { photoVersion } from "@/lib/photo-version";
 import { ProfileCard } from "@/components/ProfileCard";
 import { AskShell } from "@/components/AskShell";
 import styles from "./page.module.css";
@@ -11,8 +12,11 @@ async function Profile() {
   await connection();
   let profile;
   let photoPath;
+  let photoUrl: string | undefined;
   try {
     ({ profile, photoPath } = await getCorpus());
+    // Version token busts the browser cache when the photo file changes (the route ignores it).
+    if (photoPath) photoUrl = `/api/photo?v=${await photoVersion(photoPath)}`;
   } catch (err) {
     // Log details server-side only; nothing from err reaches the page.
     // stderr, not console: React replays server console calls (with paths) into the browser in dev.
@@ -24,7 +28,7 @@ async function Profile() {
       <title>{`Ask about ${profile.name}`}</title>
       {/* ProfileCard is a client component: pass only display fields to the browser. */}
       <AskShell
-        profileCard={<ProfileCard profile={{ name: profile.name, headline: profile.headline, about: profile.about, links: profile.links, blurb: profile.blurb, starterQuestions: [], breakItQuestions: [] }} photoUrl={photoPath ? "/api/photo" : undefined} />}
+        profileCard={<ProfileCard profile={{ name: profile.name, headline: profile.headline, about: profile.about, links: profile.links, blurb: profile.blurb, starterQuestions: [], breakItQuestions: [] }} photoUrl={photoUrl} />}
         starterQuestions={profile.starterQuestions}
         breakItQuestions={profile.breakItQuestions}
         candidateName={profile.name}
