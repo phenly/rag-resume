@@ -4,6 +4,7 @@
   "documents": [
     { "title": "Career inventory", "path": "inventory.md" },
     { "title": "Story bank", "path": "story-bank.md" },
-    { "title": "LinkedIn profile", "path": "linkedin-profile.md" }
+    { "title": "LinkedIn profile", "path": "linkedin-profile.md" },
+    { "title": "Company summaries", "path": "companies.md" }
   ]
 }

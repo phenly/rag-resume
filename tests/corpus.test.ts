@@ -10,7 +10,7 @@ describe("corpus", () => {
   it("loads the sample corpus", async () => {
     const c = await loadCorpus(sampleDir);
     expect(c.profile.name).toBe("Jordan Example");
-    expect(c.documents).toHaveLength(3);
+    expect(c.documents).toHaveLength(4);
     expect(c.profile.starterQuestions).toHaveLength(5);
   });
 

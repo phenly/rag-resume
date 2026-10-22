@@ -9,7 +9,7 @@ describe("system prompt", () => {
     const b = buildSystemPrompt(await load());
     expect(b).toHaveLength(3);
     expect(b[1].text.startsWith("# Positioning notes")).toBe(true);
-    expect(b[2].text.match(/<document title=/g)).toHaveLength(3);
+    expect(b[2].text.match(/<document title=/g)).toHaveLength(4);
   });
 
   it("caches only the last block for 1h", async () => {
