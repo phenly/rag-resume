@@ -96,4 +96,12 @@ describe("leak guard", () => {
     expect(r.stderr).not.toContain("leak-guard:");
     expect(r.status).toBe(0);
   });
+
+  it("blocks a marker in a file whose name has glob characters", () => {
+    const dir = makeRepo({ marker: "ZEBRA-MARKER-01" });
+    fs.writeFileSync(path.join(dir, "notes[1].md"), "hello zebra-marker-01\n");
+    const r = commit(dir, ["notes[1].md"]);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("local:1");
+  });
 });
