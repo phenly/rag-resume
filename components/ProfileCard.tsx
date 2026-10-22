@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import type { Profile } from "@/lib/corpus";
 import Link from "next/link";
 import styles from "./ProfileCard.module.css";
@@ -19,12 +22,22 @@ function isSafeUrl(url: string): boolean {
   }
 }
 
-export function ProfileCard({ profile }: { profile: Profile }) {
+export function ProfileCard({ profile, photoUrl }: { profile: Profile; photoUrl?: string }) {
+  const [photoFailed, setPhotoFailed] = useState(false);
+  const showPhoto = Boolean(photoUrl) && !photoFailed;
   return (
     <article className={styles.card}>
       <div className={styles.banner} aria-hidden="true" />
       <div className={styles.body}>
-        <div className={styles.avatar} aria-hidden="true">{initials(profile.name)}</div>
+        {showPhoto ? (
+          <div className={styles.avatar}>
+            {/* Plain <img>: the source is a local API route, so next/image optimization adds nothing. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img className={styles.photo} src={photoUrl} alt={profile.name} onError={() => setPhotoFailed(true)} />
+          </div>
+        ) : (
+          <div className={styles.avatar} aria-hidden="true">{initials(profile.name)}</div>
+        )}
         <h1 className={styles.name}>{profile.name}</h1>
         <p className={styles.headline}>{profile.headline}</p>
 

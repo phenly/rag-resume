@@ -9,8 +9,9 @@ async function Profile() {
   // Read the corpus per request so edits show up after a refresh.
   await connection();
   let profile;
+  let photoPath;
   try {
-    ({ profile } = await loadCorpus(resolveCorpusDir()));
+    ({ profile, photoPath } = await loadCorpus(resolveCorpusDir()));
   } catch (err) {
     // Log details server-side only; nothing from err reaches the page.
     const e = err as { message?: string; entryTitle?: string; detail?: string };
@@ -21,7 +22,8 @@ async function Profile() {
     <>
       <title>{`Ask about ${profile.name}`}</title>
       <aside className={styles.sidebar}>
-        <ProfileCard profile={profile} />
+        {/* ProfileCard is a client component: strip the photo filename before it reaches the browser. */}
+        <ProfileCard profile={{ ...profile, photo: undefined }} photoUrl={photoPath ? "/api/photo" : undefined} />
       </aside>
       <section className={styles.main}>
         <AskPanel
