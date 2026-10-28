@@ -4,7 +4,7 @@ import { getCorpus } from "@/lib/corpus-cache";
 import { logServerError } from "@/lib/log";
 import { photoVersion } from "@/lib/photo-version";
 import { ProfileCard } from "@/components/ProfileCard";
-import { AskShell } from "@/components/AskShell";
+import { ChatApp } from "@/components/ChatApp";
 import styles from "./page.module.css";
 
 async function Profile() {
@@ -34,11 +34,13 @@ async function Profile() {
     <>
       <title>{`Ask about ${profile.name}`}</title>
       {/* ProfileCard is a client component: pass only display fields to the browser. */}
-      <AskShell
+      <ChatApp
         profileCard={<ProfileCard profile={{ name: profile.name, headline: profile.headline, about: profile.about, links: profile.links, blurb: profile.blurb, starterQuestions: [], breakItQuestions: [] }} photoUrl={photoUrl} />}
         starterQuestions={profile.starterQuestions}
         breakItQuestions={profile.breakItQuestions}
         candidateName={profile.name}
+        photoUrl={photoUrl}
+        blurb={profile.blurb}
       />
     </>
   );

@@ -1,7 +1,0 @@
-.sidebar { display: flex; flex-direction: column; gap: var(--space-4); height: var(--sidebar-height); min-height: var(--panel-min-height); margin: calc(var(--sidebar-inset) * -1); padding: var(--sidebar-inset); overflow-y: auto; }
-@supports (height: 100dvh) { .sidebar { height: var(--sidebar-height-dvh); } }
-.sidebar > :first-child { flex: 0 0 auto; }
-.main { min-width: 0; }
-@media (max-width: 768px) {
-  .sidebar { height: auto; min-height: 0; margin: 0; padding: 0; overflow-y: visible; }
-}

@@ -20,9 +20,10 @@ describe("ProfileCard", () => {
     expect(screen.getByText("Engineering leader")).toBeInTheDocument();
   });
 
-  it("links to how-it-works", () => {
+  it("leaves the blurb and how-it-works link to the chat app", () => {
     render(<ProfileCard profile={profile} />);
-    expect(screen.getByRole("link", { name: /how this works/i })).toHaveAttribute("href", "/how-it-works");
+    expect(screen.queryByText(profile.blurb)).toBeNull();
+    expect(screen.queryByRole("link", { name: /how this works/i })).toBeNull();
   });
 });
 

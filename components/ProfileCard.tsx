@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import type { Profile } from "@/lib/corpus";
-import Link from "next/link";
 import styles from "./ProfileCard.module.css";
 
 function initials(name: string): string {
@@ -61,9 +60,6 @@ export function ProfileCard({ profile, photoUrl }: { profile: Profile; photoUrl?
           </>
         )}
 
-        <p className={styles.blurb}>
-          {profile.blurb} <Link href="/how-it-works">How this works &rarr;</Link>
-        </p>
       </div>
     </article>
   );
