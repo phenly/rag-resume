@@ -299,20 +299,31 @@ describe("ChatApp + AskPanel", () => {
       expect(screen.queryByRole("link", { name: "see how this app works →" })).toBeNull();
     });
 
-    it("starter row shows three starters; clicking one fills without submitting; row hides once a question is sent", async () => {
+    it("starter row shows one starter; clicking it fills without submitting; row hides once a question is sent", async () => {
       fetchMock.mockImplementation(async () => answered());
       render(<ChatApp profileCard={<div />} {...props} />);
       const row = screen.getByRole("group", { name: "Starter questions" });
       const chips = within(row).getAllByRole("button");
-      expect(chips.map((c) => c.textContent)).toEqual(["Starter one?", "Starter two?", "Starter three?"]);
-      fireEvent.click(chips[1]);
+      expect(chips.map((c) => c.textContent)).toEqual(["Starter one?"]);
+      fireEvent.click(chips[0]);
       const box = screen.getByRole("textbox") as HTMLTextAreaElement;
-      expect(box).toHaveValue("Starter two?");
+      expect(box).toHaveValue("Starter one?");
       expect(box).toHaveFocus();
       expect(fetchMock).not.toHaveBeenCalled();
       fireEvent.click(screen.getByRole("button", { name: "Ask" }));
       await screen.findByText("ans");
       expect(screen.queryByRole("group", { name: "Starter questions" })).toBeNull();
+    });
+
+    it("the menu's Try asking lists every starter; picking one fills the composer", () => {
+      render(<ChatApp profileCard={<div />} {...props} />);
+      fireEvent.click(screen.getByRole("button", { name: "Try asking (4)" }));
+      const group = screen.getByRole("group", { name: "Try asking" });
+      const chips = within(group).getAllByRole("button");
+      expect(chips.map((c) => c.textContent)).toEqual(props.starterQuestions);
+      fireEvent.click(chips[3]);
+      expect(screen.getByRole("textbox")).toHaveValue("Starter four?");
+      expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("Clear chat empties the conversation and brings back the empty state and starters", async () => {

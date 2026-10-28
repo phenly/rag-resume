@@ -2,7 +2,7 @@
 
 import styles from "./StarterChips.module.css";
 
-const MAX_STARTERS = 3;
+const MAX_STARTERS = 1;
 
 type Props = { questions: string[]; disabled: boolean; onPick: (q: string) => void };
 

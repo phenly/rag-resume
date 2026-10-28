@@ -2,7 +2,3 @@
 .chip { max-width: 100%; min-height: var(--tap-target-min); padding: var(--chip-padding-y) var(--chip-padding-x); font: inherit; font-size: var(--font-size-chip); line-height: var(--line-height-tight); text-align: left; color: var(--color-accent); background: var(--color-card); border: 1px solid var(--color-accent); border-radius: var(--radius-chip); cursor: pointer; }
 .chip:hover:not(:disabled) { background: var(--color-accent-soft); }
 .chip:disabled { color: var(--color-muted); border-color: var(--color-disabled); cursor: not-allowed; }
-@media (width <= 768px) {
-  .chips { flex-wrap: nowrap; overflow-x: auto; }
-  .chip { flex: 0 0 auto; max-width: 80%; white-space: nowrap; }
-}

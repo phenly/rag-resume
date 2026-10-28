@@ -95,6 +95,7 @@ export function ChatApp({ profileCard, breakItQuestions, starterQuestions, candi
           }}
           clearDisabled={busy}
           profileCard={profileCard}
+          starterQuestions={starterQuestions}
           breakItQuestions={breakItQuestions}
           onPick={(q) => {
             if (!pinned) flushSync(closeMenu);

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, type ReactNode } from "react";
 import Link from "next/link";
-import { BreakItQuestions } from "./ExampleQuestions";
+import { BreakItQuestions, TryAskingQuestions } from "./ExampleQuestions";
 import styles from "./SideMenu.module.css";
 
 type Props = {
@@ -12,6 +12,7 @@ type Props = {
   onClear(): void;
   clearDisabled: boolean;
   profileCard: ReactNode;
+  starterQuestions: string[];
   breakItQuestions: string[];
   onPick(q: string): void;
   pickDisabled: boolean;
@@ -19,7 +20,7 @@ type Props = {
   auto?: boolean;
 };
 
-export function SideMenu({ open, pinned, onClose, onClear, clearDisabled, profileCard, breakItQuestions, onPick, pickDisabled, auto }: Props) {
+export function SideMenu({ open, pinned, onClose, onClear, clearDisabled, profileCard, starterQuestions, breakItQuestions, onPick, pickDisabled, auto }: Props) {
   const menuRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -79,6 +80,7 @@ export function SideMenu({ open, pinned, onClose, onClear, clearDisabled, profil
           {profileCard}
         </section>
         <Link href="/how-it-works" className={styles.link} onClick={() => { if (!pinned) onClose(); }}>How this works</Link>
+        <TryAskingQuestions questions={starterQuestions} disabled={pickDisabled} onPick={onPick} />
         <BreakItQuestions breakItQuestions={breakItQuestions} disabled={pickDisabled} onPick={onPick} />
       </aside>
     </>
