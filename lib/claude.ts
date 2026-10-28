@@ -9,7 +9,7 @@ export class ConfigError extends Error {
 }
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
-export type AskConfig = { apiKey: string; model: string; effort: Effort };
+export type AskConfig = { apiKey: string; model: string; effort: Effort; maxTokens: number };
 
 const EFFORTS: readonly Effort[] = ["low", "medium", "high", "xhigh", "max"];
 
@@ -17,10 +17,12 @@ export function readAskConfig(env: Record<string, string | undefined> = process.
   const apiKey = env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) throw new ConfigError("ANTHROPIC_API_KEY is not set");
   const effort = env.RAG_EFFORT?.trim() as Effort | undefined;
+  const maxTokens = Number(env.RAG_MAX_TOKENS);
   return {
     apiKey,
     model: env.RAG_MODEL?.trim() || "claude-opus-5-5",
     effort: effort && EFFORTS.includes(effort) ? effort : "medium",
+    maxTokens: Number.isSafeInteger(maxTokens) && maxTokens >= 256 ? maxTokens : 1500,
   };
 }
 
@@ -60,7 +62,7 @@ export async function* streamAnswer(
   try {
     stream = client.beta.messages.stream({
       model: config.model,
-      max_tokens: 4000,
+      max_tokens: config.maxTokens,
       system,
       messages: [{ role: "user", content: question }],
       output_config: { effort: config.effort },

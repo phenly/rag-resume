@@ -1,5 +1,6 @@
 {
   "profile": "profile.json",
+  "answerStyle": "answer-style.md",
   "positioningNotes": "positioning-notes.md",
   "documents": [
     { "title": "Career inventory", "path": "inventory.md" },

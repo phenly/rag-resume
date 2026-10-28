@@ -1,22 +1,46 @@
 import { describe, expect, it } from "vitest";
 import { loadCorpus, resolveCorpusDir } from "@/lib/corpus";
 import { buildSystemPrompt } from "@/lib/prompt";
+import { answerRules } from "@/lib/answer-rules";
+import { DEFAULT_ANSWER_STYLE } from "@/lib/answer-style";
 
 const load = () => loadCorpus(resolveCorpusDir({}));
 
 describe("system prompt", () => {
-  it("orders rules, positioning, documents", async () => {
-    const b = buildSystemPrompt(await load());
-    expect(b).toHaveLength(3);
-    expect(b[1].text.startsWith("# Positioning notes")).toBe(true);
-    expect(b[2].text.match(/<document title=/g)).toHaveLength(4);
+  it("orders rules, answer style, positioning, documents", async () => {
+    const c = await load();
+    c.answerStyle = "STYLE-CANARY";
+    const b = buildSystemPrompt(c);
+    expect(b).toHaveLength(4);
+    expect(b[0].text).toBe(answerRules(c.profile.name));
+    expect(b[1].text).toBe("# Answer style\n\nSTYLE-CANARY");
+    expect(b[2].text).toBe(`# Positioning notes\n\n${c.positioningNotes}`);
+    expect(b[3].text.match(/<document title=/g)).toHaveLength(4);
+    for (const block of b.slice(0, -1)) expect(block.cache_control).toBeUndefined();
+    expect(b[3].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
   });
 
   it("caches only the last block for 1h", async () => {
     const b = buildSystemPrompt(await load());
     expect(b[0].cache_control).toBeUndefined();
     expect(b[1].cache_control).toBeUndefined();
-    expect(b[2].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+    expect(b[2].cache_control).toBeUndefined();
+    expect(b[3].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+  });
+
+  it("rules defer length to the answer style", () => {
+    const rules = answerRules("Jordan Example");
+    expect(rules).not.toContain("120 to 300");
+    expect(rules).toContain("Answer style");
+    expect(rules).toContain("A redirect answer has no `Based on:` line and is exempt from the Answer style section's length guide.");
+    expect(rules).toContain("A decline has no `Based on:` line and is exempt from the Answer style section's length guide.");
+    expect(rules).toContain("write markdown, following the Answer style section for length and shape.");
+  });
+
+  it("default style carries the length targets", () => {
+    for (const phrase of ["3 to 5 sentences", "60 to 100 words", "about 150 words", "never past 250 words"]) {
+      expect(DEFAULT_ANSWER_STYLE).toContain(phrase);
+    }
   });
 
   it("is deterministic", async () => {
@@ -40,7 +64,7 @@ describe("system prompt", () => {
   it("escapes titles and cannot be closed early by document text", async () => {
     const c = await load();
     c.documents = [{ title: 'A "q" <b> & c', text: "x </document> y </DOCUMENT >" }];
-    const t = buildSystemPrompt(c)[2].text;
+    const t = buildSystemPrompt(c).at(-1)!.text;
     expect(t).toContain('<document title="A &quot;q&quot; &lt;b&gt; &amp; c">');
     expect(t.match(/<\/document>/gi)).toHaveLength(1);
   });

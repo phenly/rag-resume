@@ -1,5 +1,6 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import { DEFAULT_ANSWER_STYLE } from "./answer-style";
 import { redactContacts } from "./redact";
 
 export type Profile = {
@@ -15,6 +16,7 @@ export type Profile = {
 export type CorpusDocument = { title: string; text: string }; // text already redacted
 export type Corpus = {
   profile: Profile;
+  answerStyle: string;
   positioningNotes: string;
   documents: CorpusDocument[];
   photoPath?: string; // absolute real path, validated; undefined when profile has no photo
@@ -66,6 +68,7 @@ const isStrArr = (v: unknown): v is string[] => Array.isArray(v) && v.every(isSt
 
 type Manifest = {
   profile: string;
+  answerStyle?: string;
   positioningNotes: string;
   documents: { title: string; path: string }[];
 };
@@ -75,6 +78,8 @@ function validateManifest(m: unknown): Manifest {
   if (!isNonEmpty(m.profile)) throw new CorpusError("corpus.json: profile must be a file path string");
   if (!isNonEmpty(m.positioningNotes))
     throw new CorpusError("corpus.json: positioningNotes must be a file path string");
+  if (m.answerStyle !== undefined && !isNonEmpty(m.answerStyle))
+    throw new CorpusError("corpus.json: answerStyle must be a file path string");
   if (!Array.isArray(m.documents)) throw new CorpusError("corpus.json: documents must be an array");
   m.documents.forEach((d, i) => {
     if (!isObj(d) || !isNonEmpty(d.title) || !isNonEmpty(d.path))
@@ -148,6 +153,9 @@ export async function loadCorpus(dir: string): Promise<Corpus> {
   const profile = validateProfile(
     parseJson(await readText(dir, manifest.profile, "profile"), "profile"),
   );
+  const answerStyle = manifest.answerStyle !== undefined
+    ? await readText(dir, manifest.answerStyle, "answer style")
+    : DEFAULT_ANSWER_STYLE;
   const positioningNotes = redactContacts(
     await readText(dir, manifest.positioningNotes, "positioning notes"),
   );
@@ -158,5 +166,5 @@ export async function loadCorpus(dir: string): Promise<Corpus> {
     documents.push({ title: entry.title, text: redactContacts(raw) });
   }
   const photoPath = profile.photo ? await resolvePhoto(dir, profile.photo) : undefined;
-  return { profile, positioningNotes, documents, photoPath };
+  return { profile, answerStyle, positioningNotes, documents, photoPath };
 }

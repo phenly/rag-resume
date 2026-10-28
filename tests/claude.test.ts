@@ -3,7 +3,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { ConfigError, lastStats, readAskConfig, streamAnswer, type AskConfig } from "@/lib/claude";
 import type { AskEvent } from "@/lib/events";
 
-const config: AskConfig = { apiKey: "k", model: "claude-opus-5-5", effort: "medium" };
+const config: AskConfig = { apiKey: "k", model: "claude-opus-5-5", effort: "medium", maxTokens: 1500 };
 const system = [{ type: "text", text: "sys" }] as Anthropic.Beta.BetaTextBlockParam[];
 
 function fakeClient(opts: { deltas?: string[]; stopReason?: string; throwAfter?: boolean; throwSync?: boolean }) {
@@ -50,13 +50,21 @@ describe("streamAnswer", () => {
     await collect(streamAnswer("Q?", system, config, client));
     const p = captured.params!;
     expect(p.model).toBe("claude-opus-5-5");
-    expect(p.max_tokens).toBe(4000);
+    expect(p.max_tokens).toBe(config.maxTokens);
     expect(p.system).toBe(system);
     expect(p.messages).toEqual([{ role: "user", content: "Q?" }]);
     expect(p.output_config).toEqual({ effort: "medium" });
     expect(p.fallbacks).toBe("default");
     expect(p.betas).toEqual(["server-side-fallback-2026-07-01"]);
     for (const k of ["thinking", "temperature", "top_p", "top_k"]) expect(p).not.toHaveProperty(k);
+  });
+
+  it("max_tokens comes from RAG_MAX_TOKENS", async () => {
+    const custom = readAskConfig({ ANTHROPIC_API_KEY: "k", RAG_MAX_TOKENS: "900" });
+    expect(custom.maxTokens).toBe(900);
+    const { client, captured } = fakeClient({});
+    await collect(streamAnswer("Q", system, custom, client));
+    expect(captured.params!.max_tokens).toBe(custom.maxTokens);
   });
 
   it("yields text events then done/complete", async () => {
@@ -148,7 +156,19 @@ describe("readAskConfig", () => {
       apiKey: "k",
       model: "claude-opus-5-5",
       effort: "medium",
+      maxTokens: 1500,
     });
+  });
+
+  it.each([undefined, "", "nonnumeric", "255", "256.5", "Infinity", "900tokens", "9007199254740992"])(
+    "defaults maxTokens to 1500 for an unset or invalid value: %j",
+    (maxTokens) => {
+      expect(readAskConfig({ ANTHROPIC_API_KEY: "k", RAG_MAX_TOKENS: maxTokens }).maxTokens).toBe(1500);
+    },
+  );
+
+  it("accepts a maxTokens integer at the minimum", () => {
+    expect(readAskConfig({ ANTHROPIC_API_KEY: "k", RAG_MAX_TOKENS: "256" }).maxTokens).toBe(256);
   });
 
   it("throws ConfigError without a key", () => {
