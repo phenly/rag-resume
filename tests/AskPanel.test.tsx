@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatApp } from "@/components/ChatApp";
 
@@ -19,9 +19,9 @@ const ndjson = (chunks: string[], gate?: Promise<void>) =>
   new Response(streamOf(chunks, gate), { status: 200, headers: { "Content-Type": "application/x-ndjson" } });
 
 const props = {
-  starterQuestions: ["Break one?", "Break two?"],
+  starterQuestions: ["Starter one?", "Starter two?", "Starter three?", "Starter four?"],
   breakItQuestions: ["Break one?", "Break two?"],
-  blurb: "Ask anything.",
+  blurb: "A resume can't capture a career. Ask anything about mine.",
   candidateName: "Jordan Example",
 };
 
@@ -266,5 +266,82 @@ describe("ChatApp + AskPanel", () => {
     render(<ChatApp profileCard={<div />} {...props} />);
     chipAsk("Break one?");
     expect(await screen.findByText("This conversation expired. Clear chat to start again.")).toBeInTheDocument();
+  });
+
+  describe("empty state, starters and Clear chat", () => {
+    const answered = () =>
+      ndjson([line({ type: "text", text: "ans" }), line({ type: "done", status: "complete", sig: "s1" })]);
+
+    it("empty state shows the blurb and a how-this-works link before any question; both disappear after the first", async () => {
+      fetchMock.mockImplementation(async () => answered());
+      render(<ChatApp profileCard={<div />} {...props} />);
+      expect(screen.getByText(props.blurb)).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "see how this app works →" })).toHaveAttribute("href", "/how-it-works");
+      expect(screen.getByText(/Or you can/)).toBeInTheDocument();
+      fireEvent.change(screen.getByRole("textbox"), { target: { value: "Hello?" } });
+      fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+      await screen.findByText("ans");
+      expect(screen.queryByText(props.blurb)).toBeNull();
+      expect(screen.queryByRole("link", { name: "see how this app works →" })).toBeNull();
+    });
+
+    it("starter row shows three starters; clicking one fills without submitting; row hides once a question is sent", async () => {
+      fetchMock.mockImplementation(async () => answered());
+      render(<ChatApp profileCard={<div />} {...props} />);
+      const row = screen.getByRole("group", { name: "Starter questions" });
+      const chips = within(row).getAllByRole("button");
+      expect(chips.map((c) => c.textContent)).toEqual(["Starter one?", "Starter two?", "Starter three?"]);
+      fireEvent.click(chips[1]);
+      const box = screen.getByRole("textbox") as HTMLTextAreaElement;
+      expect(box).toHaveValue("Starter two?");
+      expect(box).toHaveFocus();
+      expect(fetchMock).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+      await screen.findByText("ans");
+      expect(screen.queryByRole("group", { name: "Starter questions" })).toBeNull();
+    });
+
+    it("Clear chat empties the conversation and brings back the empty state and starters", async () => {
+      fetchMock.mockImplementation(async () => answered());
+      render(<ChatApp profileCard={<div />} {...props} />);
+      fireEvent.change(screen.getByRole("textbox"), { target: { value: "Hello?" } });
+      fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+      await screen.findByText("ans");
+      const clear = screen.getByRole("button", { name: "Clear chat" });
+      await waitFor(() => expect(clear).toBeEnabled());
+      fireEvent.click(clear);
+      expect(document.querySelectorAll("[data-message]")).toHaveLength(0);
+      expect(screen.getByText(props.blurb)).toBeInTheDocument();
+      expect(screen.getByRole("group", { name: "Starter questions" })).toBeInTheDocument();
+    });
+
+    it("Clear chat is disabled while an answer streams", async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      fetchMock.mockResolvedValue(
+        ndjson([line({ type: "text", text: "Part" }), line({ type: "done", status: "complete" })], gate),
+      );
+      render(<ChatApp profileCard={<div />} {...props} />);
+      fireEvent.change(screen.getByRole("textbox"), { target: { value: "Q" } });
+      fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+      await screen.findByText("Part");
+      expect(screen.getByRole("button", { name: "Clear chat" })).toBeDisabled();
+      release();
+      await waitFor(() => expect(screen.getByRole("button", { name: "Clear chat" })).toBeEnabled());
+    });
+
+    it("a cleared conversation sends no history on the next question", async () => {
+      fetchMock.mockImplementation(async () => answered());
+      render(<ChatApp profileCard={<div />} {...props} />);
+      fireEvent.change(screen.getByRole("textbox"), { target: { value: "First?" } });
+      fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+      await screen.findByText("ans");
+      await waitFor(() => expect(screen.getByRole("button", { name: "Clear chat" })).toBeEnabled());
+      fireEvent.click(screen.getByRole("button", { name: "Clear chat" }));
+      fireEvent.change(screen.getByRole("textbox"), { target: { value: "Second?" } });
+      fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      expect(body(1)).toEqual({ question: "Second?", history: [] });
+    });
   });
 });

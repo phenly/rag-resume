@@ -17,7 +17,7 @@ type Props = {
   blurb: string;
 };
 
-export function ChatApp({ profileCard, breakItQuestions, candidateName }: Props) {
+export function ChatApp({ profileCard, breakItQuestions, starterQuestions, candidateName, photoUrl, blurb }: Props) {
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const subscribeToViewport = useCallback((onChange: () => void) => {
     const media = window.matchMedia(DESKTOP_QUERY);
@@ -35,6 +35,8 @@ export function ChatApp({ profileCard, breakItQuestions, candidateName }: Props)
   const [menu, setMenu] = useState({ pinned, open: pinned });
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // Remounting AskPanel drops its cards and signed history, so Clear chat is just a new key.
+  const [chatKey, setChatKey] = useState(0);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Crossing the breakpoint restores that layout's default menu state.
@@ -81,8 +83,8 @@ export function ChatApp({ profileCard, breakItQuestions, candidateName }: Props)
           open={open}
           pinned={pinned}
           onClose={closeMenu}
-          onClear={() => {}}
-          clearDisabled={true}
+          onClear={() => setChatKey((k) => k + 1)}
+          clearDisabled={busy}
           profileCard={profileCard}
           breakItQuestions={breakItQuestions}
           onPick={(q) => {
@@ -93,7 +95,12 @@ export function ChatApp({ profileCard, breakItQuestions, candidateName }: Props)
         />
         <section className={styles.main} inert={open && !pinned}>
           <AskPanel
+            key={chatKey}
             candidateName={candidateName}
+            photoUrl={photoUrl}
+            blurb={blurb}
+            starterQuestions={starterQuestions}
+            onPick={fill}
             input={input}
             onInputChange={setInput}
             busy={busy}

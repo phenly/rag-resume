@@ -3,6 +3,8 @@
 import { Fragment, useEffect, useRef, useState, type RefObject } from "react";
 import { createEventParser } from "@/lib/events";
 import { MAX_HISTORY_TURNS, type Turn } from "@/lib/history";
+import { EmptyState } from "./EmptyState";
+import { StarterChips } from "./StarterChips";
 import { AnswerCard, type CardStatus } from "./AnswerCard";
 import styles from "./AskPanel.module.css";
 
@@ -19,6 +21,10 @@ type Card = { id: number; question: string; text: string; status: CardStatus; er
 
 type AskPanelProps = {
   candidateName: string;
+  photoUrl?: string;
+  blurb: string;
+  starterQuestions: string[];
+  onPick: (q: string) => void;
   input: string;
   onInputChange: (value: string) => void;
   busy: boolean;
@@ -26,7 +32,7 @@ type AskPanelProps = {
   inputRef: RefObject<HTMLTextAreaElement | null>;
 };
 
-export function AskPanel({ candidateName, input, onInputChange, busy, onBusyChange, inputRef }: AskPanelProps) {
+export function AskPanel({ candidateName, photoUrl, blurb, starterQuestions, onPick, input, onInputChange, busy, onBusyChange, inputRef }: AskPanelProps) {
   const [cards, setCards] = useState<Card[]>([]);
   const [announce, setAnnounce] = useState("");
   const nextId = useRef(1);
@@ -122,7 +128,7 @@ export function AskPanel({ candidateName, input, onInputChange, busy, onBusyChan
         onScroll={onListScroll}
       >
         {cards.length === 0 && (
-          <p className={styles.empty}>Ask anything about {candidateName} &mdash; or pick an example question to start.</p>
+          <EmptyState photoUrl={photoUrl} name={candidateName} blurb={blurb} />
         )}
         {cards.map((c) => (
           <Fragment key={c.id}>
@@ -134,6 +140,8 @@ export function AskPanel({ candidateName, input, onInputChange, busy, onBusyChan
         ))}
       </div>
       <div className={styles.announcer} aria-live="polite">{announce}</div>
+
+      {cards.length === 0 && <StarterChips questions={starterQuestions} disabled={busy} onPick={onPick} />}
 
       <form
         className={styles.form}

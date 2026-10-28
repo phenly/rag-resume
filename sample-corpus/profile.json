@@ -7,7 +7,7 @@
     { "label": "Profile", "url": "https://example.com/jordan" },
     { "label": "Writing", "url": "https://example.org/jordan/writing" }
   ],
-  "blurb": "This page sends Jordan's full career archive to Claude and answers from it. Contact details are removed first, and private notes are never quoted.",
+  "blurb": "A 2 page resume can't capture a full career. With CV-AI you can ask anything about mine and get the story behind it.",
   "starterQuestions": [
     "What did Jordan accomplish at Gullwing Freight Labs?",
     "How big were the teams Jordan led?",
