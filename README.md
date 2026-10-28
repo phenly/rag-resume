@@ -26,6 +26,7 @@ Settings in `.env.local`:
 | `RAG_MODEL` | `claude-opus-5-5` | Model used to answer |
 | `RAG_EFFORT` | `medium` | `low`, `medium`, `high`, `xhigh`, or `max` |
 | `RAG_MAX_TOKENS` | `1500` | Maximum output tokens; accepts safe integers of at least `256`. Unset, nonnumeric, fractional, unsafe, or smaller values use `1500`. |
+| `HISTORY_SECRET` | (random per process) | Key that signs answers so the server can trust the conversation history the browser sends back. Set it in production (`scripts/vercel-env.sh` does); unset, a restart expires open conversations. |
 
 ## Use your own corpus
 

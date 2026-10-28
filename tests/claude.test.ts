@@ -59,6 +59,22 @@ describe("streamAnswer", () => {
     for (const k of ["thinking", "temperature", "top_p", "top_k"]) expect(p).not.toHaveProperty(k);
   });
 
+  it("sends history as alternating messages", async () => {
+    const { client, captured } = fakeClient({ deltas: ["a"] });
+    const history = [
+      { question: "q1", answer: "a1", sig: "s1" },
+      { question: "q2", answer: "a2", sig: "s2" },
+    ];
+    await collect(streamAnswer("Q", system, config, client, undefined, history));
+    expect(captured.params!.messages).toEqual([
+      { role: "user", content: "q1" },
+      { role: "assistant", content: "a1" },
+      { role: "user", content: "q2" },
+      { role: "assistant", content: "a2" },
+      { role: "user", content: "Q" },
+    ]);
+  });
+
   it("max_tokens comes from RAG_MAX_TOKENS", async () => {
     const custom = readAskConfig({ ANTHROPIC_API_KEY: "k", RAG_MAX_TOKENS: "900" });
     expect(custom.maxTokens).toBe(900);

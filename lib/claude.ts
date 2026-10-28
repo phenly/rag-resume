@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { AskEvent } from "./events";
+import type { Turn } from "./history";
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -47,6 +48,7 @@ export async function* streamAnswer(
   config: AskConfig,
   client: Anthropic = new Anthropic({ apiKey: config.apiKey }),
   signal?: AbortSignal,
+  history: Turn[] = [],
 ): AsyncGenerator<AskEvent> {
   last = null;
   const events = new Set<string>();
@@ -64,7 +66,13 @@ export async function* streamAnswer(
       model: config.model,
       max_tokens: config.maxTokens,
       system,
-      messages: [{ role: "user", content: question }],
+      messages: [
+        ...history.flatMap((t) => [
+          { role: "user" as const, content: t.question },
+          { role: "assistant" as const, content: t.answer },
+        ]),
+        { role: "user" as const, content: question },
+      ],
       output_config: { effort: config.effort },
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",

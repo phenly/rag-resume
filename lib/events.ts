@@ -1,7 +1,7 @@
-/** Wire protocol for /api/ask: newline-delimited JSON, one AskEvent per line. */
+/** Wire protocol for /api/ask: newline-delimited JSON, one AskEvent per line. `sig` (complete answers only) lets the client send the turn back as history. */
 export type AskEvent =
   | { type: "text"; text: string }
-  | { type: "done"; status: "complete" | "incomplete" | "refused" }
+  | { type: "done"; status: "complete" | "incomplete" | "refused"; sig?: string }
   | { type: "error"; message: string };
 
 /** Longest question the server accepts. (Lives here: Next route files may only export handlers/config.) */

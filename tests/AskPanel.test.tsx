@@ -50,7 +50,7 @@ describe("AskShell + AskPanel", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/ask");
-    expect(JSON.parse(init.body)).toEqual({ question: "Starter one? Edited" });
+    expect(JSON.parse(init.body)).toEqual({ question: "Starter one? Edited", history: [] });
     await screen.findByText("Hi");
   });
 
@@ -154,7 +154,7 @@ describe("AskShell + AskPanel", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     fireEvent.keyDown(box, { key: "Enter" });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ question: "Typed question" });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ question: "Typed question", history: [] });
   });
 
   it("re-enables Ask and chips after an error", async () => {
@@ -239,5 +239,77 @@ describe("AskShell + AskPanel", () => {
   it("renders no toggles for short lists", () => {
     render(<AskShell profileCard={<div />} {...props} breakItQuestions={[]} />);
     expect(screen.queryByRole("button", { name: /more examples|fewer examples|break it/i })).toBeNull();
+  });
+
+  const body = (i: number) => JSON.parse(fetchMock.mock.calls[i][1].body);
+  const askAgain = async (name: string) => {
+    await waitFor(() => expect(screen.getByRole("button", { name }) ).toBeEnabled());
+    chipAsk(name);
+  };
+
+  it("sends signed turns as history", async () => {
+    fetchMock.mockImplementation(async () =>
+      ndjson([line({ type: "text", text: "ans1" }), line({ type: "done", status: "complete", sig: "s1" })]),
+    );
+    render(<AskShell profileCard={<div />} {...props} />);
+    chipAsk("Starter one?");
+    await askAgain("Starter two?");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(body(1)).toEqual({
+      question: "Starter two?",
+      history: [{ question: "Starter one?", answer: "ans1", sig: "s1" }],
+    });
+  });
+
+  it("leaves unsigned answers out of history", async () => {
+    fetchMock.mockImplementation(async () =>
+      ndjson([line({ type: "text", text: "cut" }), line({ type: "done", status: "incomplete" })]),
+    );
+    render(<AskShell profileCard={<div />} {...props} />);
+    chipAsk("Starter one?");
+    await askAgain("Starter two?");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(body(1).history).toEqual([]);
+  });
+
+  it("leaves errored and refused answers out of history", async () => {
+    fetchMock
+      .mockResolvedValueOnce(ndjson([line({ type: "done", status: "refused" })]))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "Nope." }), { status: 500 }))
+      .mockResolvedValue(ndjson([line({ type: "done", status: "complete", sig: "s" })]));
+    render(<AskShell profileCard={<div />} {...props} />);
+    chipAsk("Starter one?");
+    await askAgain("Starter two?");
+    await screen.findByText("Nope.");
+    await askAgain("Starter one?");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(body(2).history).toEqual([]);
+  });
+
+  it("sends at most the last 6 signed turns", async () => {
+    let n = 0;
+    fetchMock.mockImplementation(async () => {
+      n++;
+      return ndjson([line({ type: "text", text: `a${n}` }), line({ type: "done", status: "complete", sig: `s${n}` })]);
+    });
+    render(<AskShell profileCard={<div />} {...props} />);
+    chipAsk("Starter one?");
+    for (let i = 1; i < 8; i++) await askAgain("Starter one?");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(8));
+    const history = body(7).history;
+    expect(history).toHaveLength(6);
+    expect(history.map((t: { sig: string }) => t.sig)).toEqual(["s1", "s2", "s3", "s4", "s5", "s6"].map((_, i) => `s${i + 2}`));
+  });
+
+  it("shows the expired-conversation message", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: "This conversation expired. Clear chat to start again." }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    render(<AskShell profileCard={<div />} {...props} />);
+    chipAsk("Starter one?");
+    expect(await screen.findByText("This conversation expired. Clear chat to start again.")).toBeInTheDocument();
   });
 });

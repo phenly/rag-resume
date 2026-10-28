@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState, type RefObject } from "react";
 import { createEventParser } from "@/lib/events";
+import { MAX_HISTORY_TURNS, type Turn } from "@/lib/history";
 import { AnswerCard, type CardStatus } from "./AnswerCard";
 import styles from "./AskPanel.module.css";
 
@@ -14,7 +15,7 @@ const ANNOUNCEMENTS = {
   error: "Answer failed.",
 } as const;
 
-type Card = { id: number; question: string; text: string; status: CardStatus; error?: string };
+type Card = { id: number; question: string; text: string; status: CardStatus; error?: string; sig?: string };
 
 type AskPanelProps = {
   candidateName: string;
@@ -46,6 +47,11 @@ export function AskPanel({ candidateName, input, onInputChange, busy, onBusyChan
   async function submit(raw: string) {
     const question = raw.trim();
     if (!question || busy) return;
+    // Only answers the server signed go back as history, oldest first.
+    const history: Turn[] = cards
+      .filter((c) => c.sig)
+      .slice(-MAX_HISTORY_TURNS)
+      .map((c) => ({ question: c.question, answer: c.text, sig: c.sig as string }));
     const id = nextId.current++;
     const update = (patch: (c: Card) => Card) =>
       setCards((cs) => cs.map((c) => (c.id === id ? patch(c) : c)));
@@ -61,7 +67,7 @@ export function AskPanel({ candidateName, input, onInputChange, busy, onBusyChan
       const res = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question, history }),
       });
       if (res.status !== 200) {
         let message = "Something went wrong. Try again.";
@@ -85,7 +91,7 @@ export function AskPanel({ candidateName, input, onInputChange, busy, onBusyChan
           } else if (ev.type === "done") {
             terminal = true;
             outcome = ev.status;
-            update((c) => ({ ...c, status: ev.status }));
+            update((c) => ({ ...c, status: ev.status, sig: ev.sig }));
           } else if (ev.type === "error") {
             terminal = true;
             update((c) => ({ ...c, status: "error", error: ev.message }));
