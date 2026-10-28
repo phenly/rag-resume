@@ -4,7 +4,8 @@ import { logServerError } from "@/lib/log";
 import { guardLocalRequest } from "@/lib/request-guard";
 import { buildSystemPrompt } from "@/lib/prompt";
 import { ConfigError, readAskConfig, streamAnswer } from "@/lib/claude";
-import { encodeEvent, MAX_QUESTION_CHARS } from "@/lib/events";
+import { encodeEvent, MAX_QUESTION_CHARS, type AskEvent } from "@/lib/events";
+import { historySecret, parseHistory, signTurn } from "@/lib/history";
 
 type System = ReturnType<typeof buildSystemPrompt>;
 // The prompt is built once per cached corpus object (getCorpus caches successes only).
@@ -22,8 +23,11 @@ export async function POST(request: Request): Promise<Response> {
   const blocked = guardLocalRequest(request, { requireJson: true });
   if (blocked) return blocked;
   let question: unknown;
+  let rawHistory: unknown;
   try {
-    question = ((await request.json()) as { question?: unknown } | null)?.question;
+    const body = (await request.json()) as { question?: unknown; history?: unknown } | null;
+    question = body?.question;
+    rawHistory = body?.history;
   } catch {
     return json(400, "Send a JSON body with a question.");
   }
@@ -33,18 +37,31 @@ export async function POST(request: Request): Promise<Response> {
   if (q.length > MAX_QUESTION_CHARS) {
     return json(400, `Keep the question under ${MAX_QUESTION_CHARS} characters.`);
   }
+  const secret = historySecret();
+  const history = parseHistory(rawHistory, secret);
+  if (!history.ok) {
+    if (history.reason === "signature") return json(400, "This conversation expired. Clear chat to start again.");
+    if (history.reason === "limit") return json(400, "Send a shorter conversation.");
+    return json(400, "Send a JSON body with a question.");
+  }
 
   try {
     const config = readAskConfig();
     const system = await getSystem();
-    const events = streamAnswer(q, system, config, undefined, request.signal);
+    const events = streamAnswer(q, system, config, undefined, request.signal, history.turns);
+    let answer = "";
     const encoder = new TextEncoder();
     const body = new ReadableStream<Uint8Array>({
       async pull(controller) {
         try {
           const { value, done } = await events.next();
           if (done) controller.close();
-          else controller.enqueue(encoder.encode(encodeEvent(value)));
+          else {
+            let ev: AskEvent = value;
+            if (ev.type === "text") answer += ev.text;
+            else if (ev.type === "done" && ev.status === "complete") ev = { ...ev, sig: signTurn(q, answer, secret) };
+            controller.enqueue(encoder.encode(encodeEvent(ev)));
+          }
         } catch (err) {
           // Never error the stream without a terminal event.
           logServerError("[ask] stream generator threw", err);

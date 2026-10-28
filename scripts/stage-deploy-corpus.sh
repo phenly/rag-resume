@@ -22,6 +22,9 @@ const copy = (rel, name) => {
 };
 manifest.profile = copy(manifest.profile, "profile.json");
 manifest.positioningNotes = copy(manifest.positioningNotes, "positioning-notes.md");
+if (manifest.answerStyle !== undefined) {
+  manifest.answerStyle = copy(manifest.answerStyle, "answer-style.md");
+}
 manifest.documents = manifest.documents.map((d, i) => ({
   title: d.title,
   path: copy(d.path, `doc-${i + 1}${path.extname(d.path) || ".md"}`),

@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { AskEvent } from "./events";
+import type { Turn } from "./history";
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -9,7 +10,7 @@ export class ConfigError extends Error {
 }
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
-export type AskConfig = { apiKey: string; model: string; effort: Effort };
+export type AskConfig = { apiKey: string; model: string; effort: Effort; maxTokens: number };
 
 const EFFORTS: readonly Effort[] = ["low", "medium", "high", "xhigh", "max"];
 
@@ -17,10 +18,12 @@ export function readAskConfig(env: Record<string, string | undefined> = process.
   const apiKey = env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) throw new ConfigError("ANTHROPIC_API_KEY is not set");
   const effort = env.RAG_EFFORT?.trim() as Effort | undefined;
+  const maxTokens = Number(env.RAG_MAX_TOKENS);
   return {
     apiKey,
     model: env.RAG_MODEL?.trim() || "claude-opus-5-5",
     effort: effort && EFFORTS.includes(effort) ? effort : "medium",
+    maxTokens: Number.isSafeInteger(maxTokens) && maxTokens >= 256 ? maxTokens : 1500,
   };
 }
 
@@ -45,6 +48,7 @@ export async function* streamAnswer(
   config: AskConfig,
   client: Anthropic = new Anthropic({ apiKey: config.apiKey }),
   signal?: AbortSignal,
+  history: Turn[] = [],
 ): AsyncGenerator<AskEvent> {
   last = null;
   const events = new Set<string>();
@@ -60,9 +64,15 @@ export async function* streamAnswer(
   try {
     stream = client.beta.messages.stream({
       model: config.model,
-      max_tokens: 4000,
+      max_tokens: config.maxTokens,
       system,
-      messages: [{ role: "user", content: question }],
+      messages: [
+        ...history.flatMap((t) => [
+          { role: "user" as const, content: t.question },
+          { role: "assistant" as const, content: t.answer },
+        ]),
+        { role: "user" as const, content: question },
+      ],
       output_config: { effort: config.effort },
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",

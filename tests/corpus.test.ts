@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CorpusError, loadCorpus, resolveCorpusDir } from "@/lib/corpus";
+import { DEFAULT_ANSWER_STYLE } from "@/lib/answer-style";
 
 const sampleDir = resolveCorpusDir({});
 
@@ -59,6 +60,49 @@ describe("corpus", () => {
     return dir;
   }
   const base = { profile: "profile.json", positioningNotes: "notes.md" };
+
+  it("loads answerStyle from the manifest path", async () => {
+    const dir = await tempCorpus({ ...base, answerStyle: "style.md", documents: [] });
+    await writeFile(path.join(dir, "style.md"), "STYLE-CANARY");
+    expect((await loadCorpus(dir)).answerStyle).toBe("STYLE-CANARY");
+  });
+
+  it("falls back to the default style", async () => {
+    const dir = await tempCorpus({ ...base, documents: [] });
+    const c = await loadCorpus(dir);
+    expect(c.answerStyle).toEqual(expect.any(String));
+    expect(c.answerStyle).toBe(DEFAULT_ANSWER_STYLE);
+  });
+
+  it("rejects a non-string answerStyle", async () => {
+    const dir = await tempCorpus({ ...base, answerStyle: 3, documents: [] });
+    const err = await loadCorpus(dir).catch((e) => e);
+    expect(err).toBeInstanceOf(CorpusError);
+    expect(err.message).toMatch(/answerStyle/);
+  });
+
+  it.each(["", "  ", null])("rejects an empty or null answerStyle: %j", async (answerStyle) => {
+    const dir = await tempCorpus({ ...base, answerStyle, documents: [] });
+    await expect(loadCorpus(dir)).rejects.toThrow(/answerStyle/);
+  });
+
+  it("reports a missing answer style without exposing its path", async () => {
+    const dir = await tempCorpus({ ...base, answerStyle: "missing-style.md", documents: [] });
+    const err = await loadCorpus(dir).catch((e) => e);
+    expect(err).toBeInstanceOf(CorpusError);
+    expect(err.message).toContain("answer style");
+    expect(err.message).not.toContain(dir);
+    expect(err.detail).toContain("missing-style.md");
+  });
+
+  it("ships the default style in the sample corpus", async () => {
+    const c = await loadCorpus(sampleDir);
+    expect(c.answerStyle).toEqual(expect.any(String));
+    expect(c.answerStyle).toBe(DEFAULT_ANSWER_STYLE);
+    const manifest = JSON.parse(await readFile(path.join(sampleDir, "corpus.json"), "utf8"));
+    expect(manifest.answerStyle).toBe("answer-style.md");
+    expect(await readFile(path.join(sampleDir, manifest.answerStyle), "utf8")).toBe(DEFAULT_ANSWER_STYLE);
+  });
 
   it("rejects a manifest entry with no path", async () => {
     const dir = await tempCorpus({ ...base, documents: [{ title: "A" }] });

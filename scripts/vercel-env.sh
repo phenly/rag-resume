@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Push production env vars to the linked Vercel project. Reads ANTHROPIC_API_KEY, RAG_MODEL and
-# RAG_EFFORT from .env.local; creates an invite token per name in .env.deploy (gitignored).
+# RAG_EFFORT from .env.local; creates HISTORY_SECRET and an invite token per name in .env.deploy (gitignored).
 # Usage: scripts/vercel-env.sh <hostname> [invitee ...]   e.g. scripts/vercel-env.sh rag-resume-x.vercel.app lee
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -14,6 +14,8 @@ for who in "$@"; do
   key="INVITE_$(printf '%s' "$who" | tr '[:lower:]' '[:upper:]')"
   command grep -q "^$key=" .env.deploy || printf '%s=%s\n' "$key" "$(openssl rand -hex 12)" >> .env.deploy
 done
+command grep -q '^HISTORY_SECRET=' .env.deploy || printf 'HISTORY_SECRET=%s\n' "$(openssl rand -hex 32)" >> .env.deploy
+history_secret="$(command grep '^HISTORY_SECRET=' .env.deploy | cut -d= -f2)"
 tokens="$(command grep '^INVITE_' .env.deploy | cut -d= -f2 | paste -sd, -)"
 
 put() {
@@ -27,3 +29,4 @@ put RAG_MODEL "${RAG_MODEL:-claude-opus-5-5}"
 put RAG_EFFORT "${RAG_EFFORT:-medium}"
 put ALLOWED_HOSTS "$host"
 put INVITE_TOKENS "$tokens"
+put HISTORY_SECRET "$history_secret"

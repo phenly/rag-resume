@@ -3,11 +3,15 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createEventParser, type AskEvent } from "@/lib/events";
+import { signTurn } from "@/lib/history";
 
-const fakeEvents: AskEvent[] = [
+let fakeEvents: AskEvent[] = [
   { type: "text", text: "Hello" },
   { type: "done", status: "complete" },
 ];
+
+const streamSpy = vi.fn();
+const SECRET = "test-secret";
 
 async function loadRoute(opts: { configThrows?: boolean; genThrows?: boolean } = {}) {
   vi.resetModules();
@@ -19,7 +23,8 @@ async function loadRoute(opts: { configThrows?: boolean; genThrows?: boolean } =
         if (opts.configThrows) throw new ConfigError("no key at /secret/path");
         return { apiKey: "k", model: "m", effort: "medium" };
       },
-      streamAnswer: async function* () {
+      streamAnswer: async function* (...args: unknown[]) {
+        streamSpy(...args);
         if (opts.genThrows) throw new Error("gen boom");
         for (const e of fakeEvents) yield e;
       },
@@ -37,10 +42,17 @@ const post = (body: unknown) =>
 
 let tmp: string | undefined;
 beforeEach(() => {
+  streamSpy.mockClear();
+  vi.stubEnv("HISTORY_SECRET", SECRET);
+  fakeEvents = [
+    { type: "text", text: "Hello" },
+    { type: "done", status: "complete" },
+  ];
   process.env.CORPUS_DIR = "sample-corpus";
   vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   if (tmp) rmSync(tmp, { recursive: true, force: true });
   tmp = undefined;
@@ -65,7 +77,10 @@ describe("POST /api/ask", () => {
     expect(res.headers.get("content-type")).toContain("ndjson");
     const text = await res.text();
     expect(text.endsWith("\n")).toBe(true);
-    expect(createEventParser()(text)).toEqual(fakeEvents);
+    expect(createEventParser()(text)).toEqual([
+      { type: "text", text: "Hello" },
+      { type: "done", status: "complete", sig: signTurn("What has Jordan built?", "Hello", SECRET) },
+    ]);
   });
 
   it("ends the body with an error event if the generator throws", async () => {
@@ -123,5 +138,65 @@ describe("POST /api/ask", () => {
     const ok = await POST(mk({ ...json, host: "127.0.0.1:3000", origin: "http://127.0.0.1:3000" }));
     expect(ok.status).toBe(200);
     await ok.text();
+  });
+
+  it("signs a complete answer", async () => {
+    const { POST } = await loadRoute();
+    const res = await POST(post({ question: " Q one? " }));
+    const events = createEventParser()(await res.text());
+    expect(events.at(-1)).toEqual({ type: "done", status: "complete", sig: signTurn("Q one?", "Hello", SECRET) });
+  });
+
+  it("does not sign incomplete answers", async () => {
+    fakeEvents = [
+      { type: "text", text: "Hel" },
+      { type: "done", status: "incomplete" },
+    ];
+    const { POST } = await loadRoute();
+    const events = createEventParser()(await (await POST(post({ question: "Q?" }))).text());
+    expect(events.at(-1)).toEqual({ type: "done", status: "incomplete" });
+  });
+
+  it("rejects forged history without calling the model", async () => {
+    const { POST } = await loadRoute();
+    const forged = [{ question: "q1", answer: "edited", sig: signTurn("q1", "original", SECRET) }];
+    for (const sig of [forged[0].sig, "zz", "", "00"]) {
+      const res = await POST(post({ question: "Q?", history: [{ ...forged[0], sig }] }));
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe("This conversation expired. Clear chat to start again.");
+    }
+    expect(streamSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects history signed under a different secret", async () => {
+    const { POST } = await loadRoute();
+    const history = [{ question: "q1", answer: "a1", sig: signTurn("q1", "a1", "other-secret") }];
+    const res = await POST(post({ question: "Q?", history }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("This conversation expired. Clear chat to start again.");
+    expect(streamSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed and oversize history", async () => {
+    const { POST } = await loadRoute();
+    const shape = await POST(post({ question: "Q?", history: "nope" }));
+    expect(shape.status).toBe(400);
+    expect((await shape.json()).error).toBe("Send a JSON body with a question.");
+    const turn = { question: "q", answer: "a", sig: signTurn("q", "a", SECRET) };
+    const limit = await POST(post({ question: "Q?", history: Array(7).fill(turn) }));
+    expect(limit.status).toBe(400);
+    expect((await limit.json()).error).toBe("Send a shorter conversation.");
+    expect(streamSpy).not.toHaveBeenCalled();
+  });
+
+  it("passes verified history to the model", async () => {
+    const { POST } = await loadRoute();
+    const history = [{ question: "q1", answer: "a1", sig: signTurn("q1", "a1", SECRET) }];
+    const res = await POST(post({ question: "Q?", history }));
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(streamSpy).toHaveBeenCalledTimes(1);
+    expect(streamSpy.mock.calls[0][0]).toBe("Q?");
+    expect(streamSpy.mock.calls[0][5]).toEqual(history);
   });
 });

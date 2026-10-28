@@ -25,6 +25,8 @@ Settings in `.env.local`:
 | `CORPUS_DIR` | `sample-corpus` | Folder holding the career archive |
 | `RAG_MODEL` | `claude-opus-5-5` | Model used to answer |
 | `RAG_EFFORT` | `medium` | `low`, `medium`, `high`, `xhigh`, or `max` |
+| `RAG_MAX_TOKENS` | `1500` | Maximum output tokens; accepts safe integers of at least `256`. Unset, nonnumeric, fractional, unsafe, or smaller values use `1500`. |
+| `HISTORY_SECRET` | (random per process) | Key that signs answers so the server can trust the conversation history the browser sends back. Set it in production (`scripts/vercel-env.sh` does); unset, a restart expires open conversations. |
 
 ## Use your own corpus
 
@@ -33,6 +35,7 @@ Point `CORPUS_DIR` at a folder of your own (absolute path, or relative to the re
 - `corpus.json`, the manifest.
 - `profile.json`, what the profile card shows.
 - `positioning-notes.md`, guidance on how to present the candidate and what to withhold.
+- `answer-style.md` (optional), guidance on answer length and shape.
 - The documents themselves (Markdown or text).
 
 `corpus.json` lists those files. Paths are absolute or relative to the corpus folder:
@@ -41,12 +44,15 @@ Point `CORPUS_DIR` at a folder of your own (absolute path, or relative to the re
 {
   "profile": "profile.json",
   "positioningNotes": "positioning-notes.md",
+  "answerStyle": "answer-style.md",
   "documents": [
     { "title": "Career inventory", "path": "inventory.md" },
     { "title": "Story bank", "path": "story-bank.md" }
   ]
 }
 ```
+
+The optional `answerStyle` path loads the file's text as the prompt's Answer style section. If omitted, the built-in style in `lib/answer-style.ts` gives first answers and unrelated new questions a 3 to 5 sentence, 60 to 100 word overview. Follow-ups on a previous thread explore just that thread in about 150 words, never past 250 words. Both prefer short paragraphs to long lists. The sample style file matches this default. `scripts/stage-deploy-corpus.sh` copies a supplied style file into the deployment corpus as `answer-style.md`.
 
 `profile.json` (see `sample-corpus/profile.json` for a full example):
 
