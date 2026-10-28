@@ -52,7 +52,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe("ChatApp + AskPanel", () => {
   it("clicking a break-it chip fills the box without submitting", async () => {
     fetchMock.mockResolvedValue(ndjson([line({ type: "text", text: "Hi" }), line({ type: "done", status: "complete" })]));
-    render(<ChatApp profileCard={<div />} {...props} />);
+    render(<ChatApp {...props} />);
     pickChip("Break one?");
     const box = screen.getByRole("textbox") as HTMLTextAreaElement;
     await waitFor(() => expect(box.value).toBe("Break one?"));
@@ -73,7 +73,7 @@ describe("ChatApp + AskPanel", () => {
     fetchMock.mockResolvedValue(
       ndjson([line({ type: "text", text: "Part" }), line({ type: "done", status: "complete" })], gate),
     );
-    render(<ChatApp profileCard={<div />} {...props} />);
+    render(<ChatApp {...props} />);
     chipAsk("Break one?");
     await screen.findByText("Part");
     expect(screen.getByRole("button", { name: "Ask" })).toBeDisabled();
@@ -86,7 +86,7 @@ describe("ChatApp + AskPanel", () => {
     fetchMock.mockImplementation(async () =>
       ndjson([line({ type: "text", text: "ans" }), line({ type: "done", status: "complete" })]),
     );
-    render(<ChatApp profileCard={<div />} {...props} />);
+    render(<ChatApp {...props} />);
     chipAsk("Break one?");
     await waitFor(() => expect(screen.getByRole("button", { name: "Break two?" })).toBeEnabled());
     chipAsk("Break two?");
@@ -102,7 +102,7 @@ describe("ChatApp + AskPanel", () => {
     fetchMock.mockImplementation(async () =>
       ndjson([line({ type: "text", text: "ans" }), line({ type: "done", status: "complete" })]),
     );
-    render(<ChatApp profileCard={<div />} {...props} />);
+    render(<ChatApp {...props} />);
     chipAsk("Break one?");
     await waitFor(() => expect(document.querySelectorAll("[data-message]")).toHaveLength(2));
     const [user, answer] = Array.from(document.querySelectorAll("[data-message]"));
@@ -121,7 +121,7 @@ describe("ChatApp + AskPanel", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    render(<ChatApp profileCard={<div />} {...props} />);
+    render(<ChatApp {...props} />);
     chipAsk("Break one?");
     expect(await screen.findByText("That question is too long.")).toBeInTheDocument();
     expect(screen.queryByRole("status")).toBeNull();
@@ -131,7 +131,7 @@ describe("ChatApp + AskPanel", () => {
     fetchMock.mockResolvedValue(
       ndjson([line({ type: "text", text: "Partial answer" }), line({ type: "error", message: "Cut off." })]),
     );
-    render(<ChatApp profileCard={<div />} {...props} />);
+    render(<ChatApp {...props} />);
     chipAsk("Break one?");
     expect(await screen.findByText("Cut off.")).toBeInTheDocument();
     expect(screen.getByText("Partial answer")).toBeInTheDocument();
@@ -143,14 +143,14 @@ describe("ChatApp + AskPanel", () => {
     fetchMock.mockResolvedValue(
       ndjson([full.slice(0, 10), full.slice(10), line({ type: "done", status: "complete" })]),
     );
-    render(<ChatApp profileCard={<div />} {...props} />);
+    render(<ChatApp {...props} />);
     chipAsk("Break one?");
     expect(await screen.findByText("Split text")).toBeInTheDocument();
   });
 
   it("stream ending without a terminal event shows an error", async () => {
     fetchMock.mockResolvedValue(ndjson([line({ type: "text", text: "Dangling" })]));
-    render(<ChatApp profileCard={<div />} {...props} />);
+    render(<ChatApp {...props} />);
     chipAsk("Break one?");
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.getByText("Dangling")).toBeInTheDocument();
@@ -159,7 +159,7 @@ describe("ChatApp + AskPanel", () => {
 
   it("Enter submits and Shift+Enter does not", async () => {
     fetchMock.mockResolvedValue(ndjson([line({ type: "done", status: "complete" })]));
-    render(<ChatApp profileCard={<div />} {...props} />);
+    render(<ChatApp {...props} />);
     const box = screen.getByRole("textbox");
     fireEvent.change(box, { target: { value: "Typed question" } });
     fireEvent.keyDown(box, { key: "Enter", shiftKey: true });
@@ -171,7 +171,7 @@ describe("ChatApp + AskPanel", () => {
 
   it("re-enables Ask and chips after an error", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: "Nope." }), { status: 500 }));
-    render(<ChatApp profileCard={<div />} {...props} />);
+    render(<ChatApp {...props} />);
     chipAsk("Break one?");
     await screen.findByText("Nope.");
     expect(screen.getByRole("button", { name: "Break two?" })).toBeEnabled();
@@ -180,7 +180,7 @@ describe("ChatApp + AskPanel", () => {
   });
 
   it("Enter during IME composition does not submit", () => {
-    render(<ChatApp profileCard={<div />} {...props} />);
+    render(<ChatApp {...props} />);
     const box = screen.getByRole("textbox");
     fireEvent.change(box, { target: { value: "にほん" } });
     fireEvent.keyDown(box, { key: "Enter", isComposing: true });
@@ -189,7 +189,7 @@ describe("ChatApp + AskPanel", () => {
 
   it("announces a status-aware message when an answer ends", async () => {
     fetchMock.mockResolvedValue(ndjson([line({ type: "done", status: "incomplete" })]));
-    const { container } = render(<ChatApp profileCard={<div />} {...props} />);
+    const { container } = render(<ChatApp {...props} />);
     chipAsk("Break one?");
     await waitFor(() =>
       expect(container.querySelector("[aria-live]")).toHaveTextContent("Answer cut off at its length limit."),
@@ -206,7 +206,7 @@ describe("ChatApp + AskPanel", () => {
     fetchMock.mockImplementation(async () =>
       ndjson([line({ type: "text", text: "ans1" }), line({ type: "done", status: "complete", sig: "s1" })]),
     );
-    render(<ChatApp profileCard={<div />} {...props} />);
+    render(<ChatApp {...props} />);
     chipAsk("Break one?");
     await askAgain("Break two?");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
@@ -220,7 +220,7 @@ describe("ChatApp + AskPanel", () => {
     fetchMock.mockImplementation(async () =>
       ndjson([line({ type: "text", text: "cut" }), line({ type: "done", status: "incomplete" })]),
     );
-    render(<ChatApp profileCard={<div />} {...props} />);
+    render(<ChatApp {...props} />);
     chipAsk("Break one?");
     await askAgain("Break two?");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
@@ -232,7 +232,7 @@ describe("ChatApp + AskPanel", () => {
       .mockResolvedValueOnce(ndjson([line({ type: "done", status: "refused" })]))
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: "Nope." }), { status: 500 }))
       .mockResolvedValue(ndjson([line({ type: "done", status: "complete", sig: "s" })]));
-    render(<ChatApp profileCard={<div />} {...props} />);
+    render(<ChatApp {...props} />);
     chipAsk("Break one?");
     await askAgain("Break two?");
     await screen.findByText("Nope.");
@@ -247,7 +247,7 @@ describe("ChatApp + AskPanel", () => {
       n++;
       return ndjson([line({ type: "text", text: `a${n}` }), line({ type: "done", status: "complete", sig: `s${n}` })]);
     });
-    render(<ChatApp profileCard={<div />} {...props} />);
+    render(<ChatApp {...props} />);
     chipAsk("Break one?");
     for (let i = 1; i < 8; i++) await askAgain("Break one?");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(8));
@@ -262,7 +262,7 @@ describe("ChatApp + AskPanel", () => {
       n++;
       return ndjson([line({ type: "text", text: `${n}`.repeat(6000) }), line({ type: "done", status: "complete", sig: `s${n}` })]);
     });
-    render(<ChatApp profileCard={<div />} {...props} />);
+    render(<ChatApp {...props} />);
     chipAsk("Break one?");
     for (let i = 1; i < 5; i++) await askAgain("Break one?");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
@@ -277,7 +277,7 @@ describe("ChatApp + AskPanel", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
-    render(<ChatApp profileCard={<div />} {...props} />);
+    render(<ChatApp {...props} />);
     chipAsk("Break one?");
     expect(await screen.findByText("This conversation expired. Clear chat to start again.")).toBeInTheDocument();
   });
@@ -288,7 +288,7 @@ describe("ChatApp + AskPanel", () => {
 
     it("empty state shows the blurb and a how-this-works link before any question; both disappear after the first", async () => {
       fetchMock.mockImplementation(async () => answered());
-      render(<ChatApp profileCard={<div />} {...props} />);
+      render(<ChatApp {...props} />);
       expect(screen.getByText(props.blurb)).toBeInTheDocument();
       expect(screen.getByRole("link", { name: "see how this app works →" })).toHaveAttribute("href", "/how-it-works");
       expect(screen.getByText(/Or you can/)).toBeInTheDocument();
@@ -301,7 +301,7 @@ describe("ChatApp + AskPanel", () => {
 
     it("starter row shows one starter; clicking it fills without submitting; row hides once a question is sent", async () => {
       fetchMock.mockImplementation(async () => answered());
-      render(<ChatApp profileCard={<div />} {...props} />);
+      render(<ChatApp {...props} />);
       const row = screen.getByRole("group", { name: "Starter questions" });
       const chips = within(row).getAllByRole("button");
       expect(chips.map((c) => c.textContent)).toEqual(["Starter one?"]);
@@ -316,7 +316,7 @@ describe("ChatApp + AskPanel", () => {
     });
 
     it("the menu's Try asking lists every starter; picking one fills the composer", () => {
-      render(<ChatApp profileCard={<div />} {...props} />);
+      render(<ChatApp {...props} />);
       fireEvent.click(screen.getByRole("button", { name: "Try asking (4)" }));
       const group = screen.getByRole("group", { name: "Try asking" });
       const chips = within(group).getAllByRole("button");
@@ -328,7 +328,7 @@ describe("ChatApp + AskPanel", () => {
 
     it("Clear chat empties the conversation and brings back the empty state and starters", async () => {
       fetchMock.mockImplementation(async () => answered());
-      render(<ChatApp profileCard={<div />} {...props} />);
+      render(<ChatApp {...props} />);
       fireEvent.change(screen.getByRole("textbox"), { target: { value: "Hello?" } });
       fireEvent.click(screen.getByRole("button", { name: "Ask" }));
       await screen.findByText("ans");
@@ -346,7 +346,7 @@ describe("ChatApp + AskPanel", () => {
       fetchMock.mockResolvedValue(
         ndjson([line({ type: "text", text: "Part" }), line({ type: "done", status: "complete" })], gate),
       );
-      render(<ChatApp profileCard={<div />} {...props} />);
+      render(<ChatApp {...props} />);
       fireEvent.change(screen.getByRole("textbox"), { target: { value: "Q" } });
       fireEvent.click(screen.getByRole("button", { name: "Ask" }));
       await screen.findByText("Part");
@@ -357,7 +357,7 @@ describe("ChatApp + AskPanel", () => {
 
     it("a cleared conversation sends no history on the next question", async () => {
       fetchMock.mockImplementation(async () => answered());
-      render(<ChatApp profileCard={<div />} {...props} />);
+      render(<ChatApp {...props} />);
       fireEvent.change(screen.getByRole("textbox"), { target: { value: "First?" } });
       fireEvent.click(screen.getByRole("button", { name: "Ask" }));
       await screen.findByText("ans");

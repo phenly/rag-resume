@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import styles from "./page.module.css";
 
-export const metadata: Metadata = { title: "How this works" };
+export const metadata: Metadata = { title: "How CV-AI works" };
 
 const boxes = [
   { title: "1. Your question", note: "Typed in the browser" },
@@ -21,9 +21,9 @@ const next = [
 export default function HowItWorks() {
   return (
     <main className={styles.page}>
-      <Link href="/" className={styles.back}>&larr; Back to the profile</Link>
+      <Link href="/" className={styles.back}>&larr; Back to the chat</Link>
       <article className={styles.card}>
-        <h1>How this works</h1>
+        <h1>How CV-AI works</h1>
         <p>
           This page is an experiment: instead of reading a resume, you ask questions and get answers drawn from a
           private archive of career notes written by the candidate. The version you are looking at is an early alpha.

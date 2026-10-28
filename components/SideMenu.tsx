@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { BreakItQuestions, TryAskingQuestions } from "./ExampleQuestions";
 import styles from "./SideMenu.module.css";
@@ -11,7 +11,7 @@ type Props = {
   onClose(): void;
   onClear(): void;
   clearDisabled: boolean;
-  profileCard: ReactNode;
+  candidateName: string;
   starterQuestions: string[];
   breakItQuestions: string[];
   onPick(q: string): void;
@@ -20,7 +20,8 @@ type Props = {
   auto?: boolean;
 };
 
-export function SideMenu({ open, pinned, onClose, onClear, clearDisabled, profileCard, starterQuestions, breakItQuestions, onPick, pickDisabled, auto }: Props) {
+export function SideMenu({ open, pinned, onClose, onClear, clearDisabled, candidateName, starterQuestions, breakItQuestions, onPick, pickDisabled, auto }: Props) {
+  const firstName = candidateName.trim().split(/\s+/)[0];
   const menuRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -66,6 +67,10 @@ export function SideMenu({ open, pinned, onClose, onClear, clearDisabled, profil
         {!pinned && (
           <button ref={closeRef} type="button" className={styles.close} aria-label="Close menu" onClick={onClose}>×</button>
         )}
+        <Link href="/about" className={styles.link} onClick={() => { if (!pinned) onClose(); }}>About {firstName}</Link>
+        <Link href="/how-it-works" className={styles.link} onClick={() => { if (!pinned) onClose(); }}>How CV-AI Works</Link>
+        <TryAskingQuestions questions={starterQuestions} disabled={pickDisabled} onPick={onPick} />
+        <BreakItQuestions breakItQuestions={breakItQuestions} disabled={pickDisabled} onPick={onPick} />
         <button
           type="button"
           className={styles.action}
@@ -75,13 +80,6 @@ export function SideMenu({ open, pinned, onClose, onClear, clearDisabled, profil
             if (!pinned) onClose();
           }}
         >Clear chat</button>
-        <section aria-labelledby="about-kevin-heading">
-          <h2 id="about-kevin-heading" className={styles.heading}>About Kevin</h2>
-          {profileCard}
-        </section>
-        <Link href="/how-it-works" className={styles.link} onClick={() => { if (!pinned) onClose(); }}>How this works</Link>
-        <TryAskingQuestions questions={starterQuestions} disabled={pickDisabled} onPick={onPick} />
-        <BreakItQuestions breakItQuestions={breakItQuestions} disabled={pickDisabled} onPick={onPick} />
       </aside>
     </>
   );

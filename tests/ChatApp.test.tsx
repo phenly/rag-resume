@@ -1,7 +1,6 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatApp } from "@/components/ChatApp";
-import { ProfileCard } from "@/components/ProfileCard";
 
 const profile = {
   name: "Jordan Example",
@@ -13,7 +12,6 @@ const profile = {
   breakItQuestions: ["Break it?"],
 };
 const props = {
-  profileCard: <ProfileCard profile={profile} />,
   candidateName: profile.name,
   starterQuestions: profile.starterQuestions,
   breakItQuestions: profile.breakItQuestions,
@@ -111,23 +109,20 @@ describe("ChatApp", () => {
     expect(screen.getByRole("button", { name: "Menu" })).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("About Kevin shows the profile card; How this works links to /how-it-works", () => {
+  it("menu items, in order: About <first name>, How CV-AI Works, Try asking, Try to break it, Clear chat", () => {
     render(<ChatApp {...props} />);
-    const about = screen.getByRole("region", { name: "About Kevin" });
-    expect(within(about).getByRole("heading", { name: "Jordan Example" })).toBeInTheDocument();
-    expect(within(about).getByText("Engineering leader")).toBeInTheDocument();
-    expect(within(about).getByText("About Jordan.")).toBeInTheDocument();
-    expect(within(about).getByRole("link", { name: "Portfolio" })).toHaveAttribute("href", "https://example.com/j");
-    expect(screen.getByRole("link", { name: "How this works" })).toHaveAttribute("href", "/how-it-works");
     const menu = screen.getByRole("complementary", { name: "Menu" });
-    const clear = within(menu).getByRole("button", { name: "Clear chat" });
-    expect(clear.compareDocumentPosition(about) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(menu).getByRole("link", { name: "About Jordan" })).toHaveAttribute("href", "/about");
+    expect(within(menu).getByRole("link", { name: "How CV-AI Works" })).toHaveAttribute("href", "/how-it-works");
+    const items = Array.from(menu.querySelectorAll("a, button")).map((el) => el.textContent);
+    expect(items).toEqual(["About Jordan", "How CV-AI Works", "Try asking (2)", "Try to break it (1)", "Clear chat"]);
+    expect(within(menu).queryByText("Engineering leader")).toBeNull();
   });
 
   it("returns focus to Menu when resizing to phone hides a focused sidebar control", () => {
     const resize = stubMatchMedia(true);
     render(<ChatApp {...props} />);
-    screen.getByRole("link", { name: "Portfolio" }).focus();
+    screen.getByRole("link", { name: "About Jordan" }).focus();
     resize(false);
     expect(screen.getByRole("button", { name: "Menu" })).toHaveFocus();
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -138,7 +133,7 @@ describe("ChatApp", () => {
     render(<ChatApp {...props} />);
     fireEvent.click(screen.getByRole("button", { name: "Menu" }));
     const close = screen.getByRole("button", { name: "Close menu" });
-    const last = screen.getByRole("button", { name: "Try to break it (1)" });
+    const last = screen.getByRole("button", { name: "Clear chat" });
     last.focus();
     fireEvent.keyDown(last, { key: "Tab" });
     expect(close).toHaveFocus();
@@ -184,11 +179,10 @@ describe("ChatApp", () => {
     fireEvent.click(screen.getByRole("button", { name: "Menu" }));
     const dialog = screen.getByRole("dialog", { name: "Menu" });
     expect(dialog).toHaveAttribute("tabindex", "-1");
-    const text = screen.getByText("About Jordan.");
-    // A real click on non-focusable content moves focus to the nearest focusable ancestor.
+    // A real click on non-focusable content (padding, gaps) moves focus to the nearest focusable ancestor.
     act(() => dialog.focus());
     expect(dialog.contains(document.activeElement)).toBe(true);
-    fireEvent.keyDown(text, { key: "Escape" });
+    fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 

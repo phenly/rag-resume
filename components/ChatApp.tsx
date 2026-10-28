@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { AskPanel } from "./AskPanel";
 import { SideMenu } from "./SideMenu";
@@ -10,7 +10,6 @@ const DESKTOP_QUERY = "(width > 768px)";
 const PHONE_QUERY = "(width <= 768px)";
 
 type Props = {
-  profileCard: ReactNode;
   candidateName: string;
   photoUrl?: string;
   starterQuestions: string[];
@@ -18,7 +17,7 @@ type Props = {
   blurb: string;
 };
 
-export function ChatApp({ profileCard, breakItQuestions, starterQuestions, candidateName, photoUrl, blurb }: Props) {
+export function ChatApp({ breakItQuestions, starterQuestions, candidateName, photoUrl, blurb }: Props) {
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const subscribeToViewport = useCallback((onChange: () => void) => {
     const media = window.matchMedia(DESKTOP_QUERY);
@@ -94,7 +93,7 @@ export function ChatApp({ profileCard, breakItQuestions, starterQuestions, candi
             setInput("");
           }}
           clearDisabled={busy}
-          profileCard={profileCard}
+          candidateName={candidateName}
           starterQuestions={starterQuestions}
           breakItQuestions={breakItQuestions}
           onPick={(q) => {
