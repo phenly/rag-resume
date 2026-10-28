@@ -63,7 +63,13 @@ describe("history", () => {
   it("uses HISTORY_SECRET when set, else a stable random per-process secret", () => {
     expect(historySecret({ HISTORY_SECRET: " abc " })).toBe("abc");
     const a = historySecret({});
-    expect(a.length).toBeGreaterThanOrEqual(32);
+    expect(a!.length).toBeGreaterThanOrEqual(32);
     expect(historySecret({ HISTORY_SECRET: "" })).toBe(a);
+  });
+
+  it("returns null on Vercel without HISTORY_SECRET (history disabled), but still honors the secret", () => {
+    expect(historySecret({ VERCEL_ENV: "production" })).toBeNull();
+    expect(historySecret({ VERCEL_ENV: "preview", HISTORY_SECRET: " " })).toBeNull();
+    expect(historySecret({ VERCEL_ENV: "production", HISTORY_SECRET: "abc" })).toBe("abc");
   });
 });

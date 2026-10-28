@@ -24,7 +24,7 @@ function stubMatchMedia(desktop: boolean) {
   const listeners = new Set<() => void>();
   vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
     media: query,
-    get matches() { return query === "(min-width: 769px)" ? desktop : !desktop; },
+    get matches() { return query === "(width > 768px)" ? desktop : !desktop; },
     addEventListener: (_: string, listener: () => void) => listeners.add(listener),
     removeEventListener: (_: string, listener: () => void) => listeners.delete(listener),
   })));
@@ -176,6 +176,51 @@ describe("ChatApp", () => {
     expect(box.selectionStart).toBe(5);
     expect(fetch).not.toHaveBeenCalled();
     expect(screen.getByRole("complementary", { name: "Menu" })).toBeVisible();
+  });
+
+  it("phone: Escape still closes the menu after clicking non-focusable content inside it", () => {
+    stubMatchMedia(false);
+    render(<ChatApp {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Menu" }));
+    const dialog = screen.getByRole("dialog", { name: "Menu" });
+    expect(dialog).toHaveAttribute("tabindex", "-1");
+    const text = screen.getByText("About Jordan.");
+    // A real click on non-focusable content moves focus to the nearest focusable ancestor.
+    act(() => dialog.focus());
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(text, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("Clear chat clears unsent composer text", () => {
+    render(<ChatApp {...props} />);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Unsent" } });
+    fireEvent.click(screen.getByRole("button", { name: "Clear chat" }));
+    expect(screen.getByRole("textbox")).toHaveValue("");
+  });
+
+  it("phone: the menu closes after pressing Clear chat", () => {
+    stubMatchMedia(false);
+    render(<ChatApp {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Menu" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear chat" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "Menu" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("server render and hydration leave the menu to CSS (no JS viewport guess)", async () => {
+    const { renderToString } = await import("react-dom/server");
+    const html = renderToString(<ChatApp {...props} />);
+    expect(html).toContain('data-auto="true"');
+    expect(html).not.toMatch(/<aside[^>]*\shidden/);
+    expect(html).toContain("autoMenu");
+  });
+
+  it("uses range-syntax queries so there is no fractional-width gap", () => {
+    render(<ChatApp {...props} />);
+    const queries = (window.matchMedia as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(queries).toContain("(width > 768px)");
+    expect(queries.some((q: string) => /min-width|max-width/.test(q))).toBe(false);
   });
 
   it("renders no break-it toggle for an empty list", () => {

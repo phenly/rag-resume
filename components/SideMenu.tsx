@@ -15,9 +15,11 @@ type Props = {
   breakItQuestions: string[];
   onPick(q: string): void;
   pickDisabled: boolean;
+  /** Viewport not known yet (server render / hydration): CSS decides whether the menu shows. */
+  auto?: boolean;
 };
 
-export function SideMenu({ open, pinned, onClose, onClear, clearDisabled, profileCard, breakItQuestions, onPick, pickDisabled }: Props) {
+export function SideMenu({ open, pinned, onClose, onClear, clearDisabled, profileCard, breakItQuestions, onPick, pickDisabled, auto }: Props) {
   const menuRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -35,6 +37,8 @@ export function SideMenu({ open, pinned, onClose, onClear, clearDisabled, profil
         ref={menuRef}
         className={styles.menu}
         hidden={!open}
+        data-auto={auto ? "true" : undefined}
+        tabIndex={pinned ? undefined : -1}
         role={pinned ? "complementary" : "dialog"}
         aria-label="Menu"
         aria-modal={!pinned && open ? true : undefined}

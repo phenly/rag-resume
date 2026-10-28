@@ -147,6 +147,39 @@ describe("POST /api/ask", () => {
     expect(events.at(-1)).toEqual({ type: "done", status: "complete", sig: signTurn("Q one?", "Hello", SECRET) });
   });
 
+  it("does not sign an empty complete answer", async () => {
+    fakeEvents = [{ type: "text", text: "  \n" }, { type: "done", status: "complete" }];
+    const { POST } = await loadRoute();
+    const events = createEventParser()(await (await POST(post({ question: "Q?" }))).text());
+    expect(events.at(-1)).toEqual({ type: "done", status: "complete" });
+  });
+
+  it("fails closed without HISTORY_SECRET on Vercel: ignores history, emits no sig, logs once", async () => {
+    vi.stubEnv("HISTORY_SECRET", "");
+    vi.stubEnv("VERCEL_ENV", "production");
+    const { POST } = await loadRoute();
+    const history = [{ question: "q1", answer: "a1", sig: "bogus" }];
+    for (let i = 0; i < 2; i++) {
+      streamSpy.mockClear();
+      const res = await POST(post({ question: "Q?", history }));
+      expect(res.status).toBe(200);
+      const events = createEventParser()(await res.text());
+      expect(events.at(-1)).toEqual({ type: "done", status: "complete" });
+      expect(streamSpy.mock.calls[0][5]).toEqual([]);
+    }
+    const logged = (process.stderr.write as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => String(c[0])).filter((m) => m.includes("HISTORY_SECRET"));
+    expect(logged).toHaveLength(1);
+  });
+
+  it("without HISTORY_SECRET and not on Vercel, signs with a per-process secret", async () => {
+    vi.stubEnv("HISTORY_SECRET", "");
+    vi.stubEnv("VERCEL_ENV", "");
+    const { POST } = await loadRoute();
+    const events = createEventParser()(await (await POST(post({ question: "Q?" }))).text());
+    expect(events.at(-1)).toMatchObject({ type: "done", status: "complete", sig: expect.any(String) });
+  });
+
   it("does not sign incomplete answers", async () => {
     fakeEvents = [
       { type: "text", text: "Hel" },
@@ -185,7 +218,7 @@ describe("POST /api/ask", () => {
     const turn = { question: "q", answer: "a", sig: signTurn("q", "a", SECRET) };
     const limit = await POST(post({ question: "Q?", history: Array(7).fill(turn) }));
     expect(limit.status).toBe(400);
-    expect((await limit.json()).error).toBe("Send a shorter conversation.");
+    expect((await limit.json()).error).toBe("This conversation got too long. Clear chat to start again.");
     expect(streamSpy).not.toHaveBeenCalled();
   });
 

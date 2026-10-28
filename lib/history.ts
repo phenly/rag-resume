@@ -45,9 +45,14 @@ export function parseHistory(raw: unknown, secret: string): ParsedHistory {
 }
 
 let processSecret: string | undefined;
-/** HISTORY_SECRET when set; otherwise a random per-process secret (local dev: a restart expires conversations). */
-export function historySecret(env: Record<string, string | undefined> = process.env): string {
+/**
+ * HISTORY_SECRET when set. Unset on a Vercel deployment (VERCEL_ENV present) returns null: per-process
+ * secrets would differ across instances, so history is disabled instead. Unset locally: a random
+ * per-process secret (a restart expires conversations).
+ */
+export function historySecret(env: Record<string, string | undefined> = process.env): string | null {
   const set = env.HISTORY_SECRET?.trim();
   if (set) return set;
+  if (env.VERCEL_ENV) return null;
   return (processSecret ??= randomBytes(32).toString("hex"));
 }

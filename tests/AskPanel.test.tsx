@@ -41,7 +41,7 @@ beforeEach(() => {
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
   vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
-    matches: query === "(min-width: 769px)",
+    matches: query === "(width > 768px)",
     media: query,
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
@@ -254,6 +254,20 @@ describe("ChatApp + AskPanel", () => {
     const history = body(7).history;
     expect(history).toHaveLength(6);
     expect(history.map((t: { sig: string }) => t.sig)).toEqual(["s2", "s3", "s4", "s5", "s6", "s7"]);
+  });
+
+  it("drops the oldest signed turns until history fits the character cap", async () => {
+    let n = 0;
+    fetchMock.mockImplementation(async () => {
+      n++;
+      return ndjson([line({ type: "text", text: `${n}`.repeat(6000) }), line({ type: "done", status: "complete", sig: `s${n}` })]);
+    });
+    render(<ChatApp profileCard={<div />} {...props} />);
+    chipAsk("Break one?");
+    for (let i = 1; i < 5; i++) await askAgain("Break one?");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+    // 4 prior turns of ~6011 chars each: only the newest two (~12022) fit in 16000.
+    expect(body(4).history.map((t: { sig: string }) => t.sig)).toEqual(["s3", "s4"]);
   });
 
   it("shows the expired-conversation message", async () => {

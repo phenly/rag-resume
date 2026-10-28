@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useRef, useState, type RefObject } from "react";
 import { createEventParser } from "@/lib/events";
-import { MAX_HISTORY_TURNS, type Turn } from "@/lib/history";
+import { MAX_HISTORY_CHARS, MAX_HISTORY_TURNS, type Turn } from "@/lib/history";
 import { EmptyState } from "./EmptyState";
 import { StarterChips } from "./StarterChips";
 import { AnswerCard, type CardStatus } from "./AnswerCard";
@@ -58,6 +58,12 @@ export function AskPanel({ candidateName, photoUrl, blurb, starterQuestions, onP
       .filter((c) => c.sig)
       .slice(-MAX_HISTORY_TURNS)
       .map((c) => ({ question: c.question, answer: c.text, sig: c.sig as string }));
+    // The server rejects oversize history, so drop the oldest turns until it fits.
+    let chars = history.reduce((n, t) => n + t.question.length + t.answer.length, 0);
+    while (history.length > 0 && chars > MAX_HISTORY_CHARS) {
+      const dropped = history.shift() as Turn;
+      chars -= dropped.question.length + dropped.answer.length;
+    }
     const id = nextId.current++;
     const update = (patch: (c: Card) => Card) =>
       setCards((cs) => cs.map((c) => (c.id === id ? patch(c) : c)));

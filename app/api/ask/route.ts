@@ -17,6 +17,13 @@ async function getSystem(): Promise<System> {
   return cached.system;
 }
 
+let warnedNoSecret = false;
+function warnNoSecretOnce() {
+  if (warnedNoSecret) return;
+  warnedNoSecret = true;
+  logServerError("[ask] follow-up history disabled", new Error("HISTORY_SECRET is not set"));
+}
+
 const json = (status: number, error: string) => Response.json({ error }, { status });
 
 export async function POST(request: Request): Promise<Response> {
@@ -38,10 +45,11 @@ export async function POST(request: Request): Promise<Response> {
     return json(400, `Keep the question under ${MAX_QUESTION_CHARS} characters.`);
   }
   const secret = historySecret();
-  const history = parseHistory(rawHistory, secret);
+  if (secret === null) warnNoSecretOnce();
+  const history = secret === null ? { ok: true as const, turns: [] } : parseHistory(rawHistory, secret);
   if (!history.ok) {
     if (history.reason === "signature") return json(400, "This conversation expired. Clear chat to start again.");
-    if (history.reason === "limit") return json(400, "Send a shorter conversation.");
+    if (history.reason === "limit") return json(400, "This conversation got too long. Clear chat to start again.");
     return json(400, "Send a JSON body with a question.");
   }
 
@@ -59,7 +67,7 @@ export async function POST(request: Request): Promise<Response> {
           else {
             let ev: AskEvent = value;
             if (ev.type === "text") answer += ev.text;
-            else if (ev.type === "done" && ev.status === "complete") ev = { ...ev, sig: signTurn(q, answer, secret) };
+            else if (ev.type === "done" && ev.status === "complete" && secret !== null && answer.trim() !== "") ev = { ...ev, sig: signTurn(q, answer, secret) };
             controller.enqueue(encoder.encode(encodeEvent(ev)));
           }
         } catch (err) {

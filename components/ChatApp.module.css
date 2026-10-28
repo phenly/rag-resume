@@ -8,6 +8,10 @@
 .main { min-width: 0; min-height: 0; width: calc(100% - var(--layout-sidebar-width) - var(--space-5)); justify-self: center; }
 .withMenu { grid-template-columns: var(--layout-sidebar-width) minmax(0, 1fr); gap: var(--space-5); }
 .withMenu .main { width: 100%; }
-@media (max-width: 768px) {
+@media (width > 768px) {
+  .autoMenu { grid-template-columns: var(--layout-sidebar-width) minmax(0, 1fr); gap: var(--space-5); }
+  .autoMenu .main { width: 100%; }
+}
+@media (width <= 768px) {
   .main { width: 100%; }
 }

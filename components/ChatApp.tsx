@@ -6,7 +6,8 @@ import { AskPanel } from "./AskPanel";
 import { SideMenu } from "./SideMenu";
 import styles from "./ChatApp.module.css";
 
-const DESKTOP_QUERY = "(min-width: 769px)";
+const DESKTOP_QUERY = "(width > 768px)";
+const PHONE_QUERY = "(width <= 768px)";
 
 type Props = {
   profileCard: ReactNode;
@@ -31,7 +32,11 @@ export function ChatApp({ profileCard, breakItQuestions, starterQuestions, candi
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
-  const pinned = useSyncExternalStore(subscribeToViewport, () => window.matchMedia(DESKTOP_QUERY).matches, () => false);
+  // null = viewport unknown (server render and hydration). CSS shows the pinned menu on desktop and hides
+  // it on phones until the real value arrives, so the first paint needs no correction.
+  const viewport = useSyncExternalStore<boolean | null>(subscribeToViewport, () => window.matchMedia(DESKTOP_QUERY).matches, () => null);
+  const auto = viewport === null;
+  const pinned = viewport ?? true;
   const [menu, setMenu] = useState({ pinned, open: pinned });
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -57,7 +62,7 @@ export function ChatApp({ profileCard, breakItQuestions, starterQuestions, candi
     el.focus();
     el.setSelectionRange(el.value.length, el.value.length);
     // On the stacked mobile layout the composer may be off screen.
-    if (typeof window.matchMedia === "function" && window.matchMedia("(max-width: 768px)").matches) {
+    if (typeof window.matchMedia === "function" && window.matchMedia(PHONE_QUERY).matches) {
       el.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
     }
   }
@@ -78,12 +83,16 @@ export function ChatApp({ profileCard, breakItQuestions, starterQuestions, candi
         </button>
         <h1 className={styles.title}>CV-AI · Ask about {candidateName}</h1>
       </header>
-      <div className={`${styles.layout} ${pinned && open ? styles.withMenu : ""}`}>
+      <div className={`${styles.layout} ${auto ? styles.autoMenu : pinned && open ? styles.withMenu : ""}`}>
         <SideMenu
           open={open}
           pinned={pinned}
           onClose={closeMenu}
-          onClear={() => setChatKey((k) => k + 1)}
+          auto={auto}
+          onClear={() => {
+            setChatKey((k) => k + 1);
+            setInput("");
+          }}
           clearDisabled={busy}
           profileCard={profileCard}
           breakItQuestions={breakItQuestions}
