@@ -1,0 +1,11 @@
+# Uploaded by `vercel deploy` from this folder. deploy-corpus/ is deliberately NOT ignored.
+.env*
+!.env.example
+.leak-guard.local
+node_modules
+.next
+.git
+.githooks
+coverage
+tests
+*.tsbuildinfo
