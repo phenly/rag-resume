@@ -75,6 +75,25 @@ Email addresses, phone numbers, and similar contact details are removed from doc
 
 **Restart the dev server after editing the corpus.** The corpus is loaded once and cached, so changes do not appear until you stop and rerun `npm run dev`.
 
+## Publishing
+
+The publishing scripts require the existing Node dependencies and the `career-source` CLI on `PATH`. They read the vault path from `VAULT`, or from a `VAULT=` line in `.env.local`. The source is `Career/Source`, person notes are in `Reference/Gente`, and the corpus is `Coding/rag-resume/corpus`, all beneath that vault. Keep the vault outside code repositories. Exported career files go to the vault's `Coding/rag-resume/corpus/career/` folder.
+
+Set `"documentsFrom": "career/bot-export.json"` in the vault's `corpus.json`. Every document listed by the exporter is loaded automatically. Keep the profile, positioning notes, answer style, and photo inside the corpus folder; manifest documents outside it (such as a LinkedIn capture) are pinned to absolute paths when `corpus-status.sh` copies the corpus. `bot-export.json` must include `chunks`, either a list of `{id, title, hash}` (what `career-source` writes) or an object keyed by entry ID; missing or malformed chunk metadata fails the report.
+
+```bash
+scripts/publish.sh --no-deploy  # lint, export, show changes, and stage deploy-corpus/
+scripts/corpus-status.sh       # compare live, last published, and current source
+```
+
+Agents use `--no-deploy`. The operator runs `scripts/publish.sh` without that flag to deploy. Every step stops on failure. After deployment, the script checks `/api/version` up to 12 times, five seconds apart, and writes `published.json` in the vault corpus only after the live version matches. A failed live check leaves the published snapshot unchanged. Avoid editing the corpus while publishing.
+
+`scripts/live-version.sh` reads the first `INVITE_[A-Z_]*=` value from the repository's untracked `.env.deploy` and sends it as an invite cookie without printing it. `SITE_URL` defaults to `https://rag-resume.pixelbytes.net`; override it for another deployment. A missing invite, failed request, or invalid version response exits with an error.
+
+`corpus-status.sh` copies the corpus into a temporary folder and exports fresh source there. It prints `live`, `published`, and `source now` versions, then `current` when all match or a change list against the published snapshot. An unreachable site is shown as `unreachable`; before the first publication, `published` is `none` and every exported chunk is listed as added. The temporary copy is removed on exit.
+
+To inspect changes directly, run `npx tsx scripts/corpus-report.ts "$VAULT/Coding/rag-resume/corpus" --against "$VAULT/Coding/rag-resume/corpus/published.json"`. Omit `--against` before the first publication. Reports show added, changed, and removed entry IDs and titles, plus changes to positioning notes, answer style, profile, and global rules. `--write <snapshot.json>` saves the version, file hashes, and exported chunks; the publishing script manages the published snapshot after its live check.
+
 ## Cost
 
 The whole archive is sent with every question (cached after the first). Each answer uses roughly 1,000 output tokens at the default effort, much of it hidden thinking. Set `RAG_EFFORT=low` to reduce that. Consider setting a spend limit in the Anthropic Console.
