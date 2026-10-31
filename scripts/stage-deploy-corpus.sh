@@ -8,7 +8,26 @@ src="${1:?usage: stage-deploy-corpus.sh <corpus-dir> [output-dir]}"
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 out="${2:-$repo/deploy-corpus}"
 
-rm -rf "$out"
+refuse() { echo "Refusing to replace $out: $1" >&2; exit 1; }
+
+# Only delete an output directory that is new, the default deploy-corpus/, or an earlier staging output.
+if [[ -e "$out" || -L "$out" ]]; then
+  [[ -d "$out" && ! -L "$out" ]] || refuse 'not a directory'
+  out_real="$(cd "$out" && pwd -P)"
+  src_real="$(cd "$src" && pwd -P)"
+  [[ "$out_real" != "$src_real" ]] || refuse 'it is the source corpus'
+  if [[ "$out_real" != "$(cd "$repo" && pwd -P)/deploy-corpus" ]]; then
+    [[ -f "$out/corpus.json" ]] || refuse 'no corpus.json, so it does not look like staging output'
+    [[ -z "$(find "$out" -mindepth 1 -type d -print -quit)" ]] || refuse 'it contains subdirectories'
+    while IFS= read -r name; do
+      case "$name" in
+        doc-[0-9]*.md | answer-style.md | positioning-notes.md | global-rules.md) ;;
+        *) refuse "unexpected file $name" ;;
+      esac
+    done < <(find "$out" -type f -name '*.md' -exec basename {} \;)
+  fi
+  rm -rf "$out"
+fi
 mkdir -p "$out"
 
 node - "$src" "$out" <<'JS'

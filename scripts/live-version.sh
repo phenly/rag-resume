@@ -22,12 +22,19 @@ if [[ -z "$token" ]]; then
   exit 1
 fi
 
-if ! response="$(curl --disable --fail --silent --connect-timeout 5 --max-time 15 \
-  --header "Cookie: invite=$token" "${SITE_URL:-https://rag-resume.pixelbytes.net}/api/version")"; then
+if ! response="$(printf 'Cookie: invite=%s\n' "$token" |
+  curl --disable --silent --connect-timeout 5 --max-time 15 --write-out $'\n%{http_code}' \
+    --header @- "${SITE_URL:-https://rag-resume.pixelbytes.net}/api/version")"; then
   echo 'Live version is unreachable' >&2
   exit 1
 fi
 unset token
+http_status="${response##*$'\n'}"
+response="${response%$'\n'*}"
+if [[ ! "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+  printf 'Live version request failed: HTTP %s\n' "$http_status" >&2
+  exit 1
+fi
 printf '%s' "$response" | node -e '
 try {
   const body = JSON.parse(require("node:fs").readFileSync(0, "utf8"));

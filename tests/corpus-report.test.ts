@@ -156,29 +156,48 @@ printf '%s\\n' "$*" >> "$CALLS"
 [[ -f "$3/keep.txt" && -f "$3/career/exported.txt" ]]
 echo 'version source-version'
 if [[ " $* " == *' --against '* ]]; then echo 'changed EX-1 — First project'; fi
+if [[ " $* " == *' --write '* ]]; then
+  printf '{"version":"%s"}\\n' "\${WRITTEN_VERSION:-source-version}" > "\${@: -1}"
+fi
 `);
   await executable(repo, "scripts/stage-deploy-corpus.sh", `#!/usr/bin/env bash
 printf 'stage %s\\n' "$1" >> "$CALLS"
 echo 'Staged synthetic corpus'
 `);
-  await executable(bin, "vercel", "#!/usr/bin/env bash\necho 'Unexpected deployment' >&2\nexit 99\n");
+  await executable(bin, "vercel", `#!/usr/bin/env bash
+if [[ "\${STUB_DEPLOY:-}" != 1 ]]; then echo 'Unexpected deployment' >&2; exit 99; fi
+printf 'vercel %s\\n' "$*" >> "$CALLS"
+`);
+  await executable(bin, "sleep", `#!/usr/bin/env bash
+printf 'sleep %s\\n' "$*" >> "$CALLS"
+`);
   await executable(bin, "curl", `#!/usr/bin/env bash
 set -eu
 printf 'curl\\n' >> "$CALLS"
 printf '%s\\n' "$@" > "$CURL_ARGS"
-if [[ "\${CURL_FAIL:-}" == 1 ]]; then exit 22; fi
+cat > "$CURL_STDIN"
+if [[ "\${CURL_FAIL:-}" == 1 ]]; then exit 7; fi
+if [[ " $* " == *' --fail '* && "\${HTTP_STATUS:-200}" -ge 400 ]]; then exit 22; fi
+write_out=''
+while (($#)); do
+  if [[ "$1" == --write-out ]]; then write_out="$2"; shift; fi
+  shift
+done
 printf '%s' "\${LIVE_BODY:-}"
+printf '%b' "\${write_out//'%{http_code}'/\${HTTP_STATUS:-200}}"
 `);
   const calls = path.join(repo, "calls.txt");
   const curlArgs = path.join(repo, "curl-args.txt");
+  const curlStdin = path.join(repo, "curl-stdin.txt");
   const run = (name: string, args: string[] = [], overrides: Record<string, string | undefined> = {}) =>
     spawnSync("bash", [path.join(repo, "scripts", name), ...args], {
       encoding: "utf8", cwd: repo,
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, VAULT: vault,
-        TMPDIR: tmp, CALLS: calls, CURL_ARGS: curlArgs, SITE_URL: "https://example.invalid",
+        TMPDIR: tmp, CALLS: calls, CURL_ARGS: curlArgs, CURL_STDIN: curlStdin,
+        SITE_URL: "https://example.invalid",
         LIVE_BODY: '{"version":"source-version"}', ...overrides },
     });
-  return { ...f, repo, corpus, tmp, calls, curlArgs, run };
+  return { ...f, repo, corpus, tmp, calls, curlArgs, curlStdin, executable, run };
 }
 
 describe("publishing shell scripts (offline)", () => {
@@ -214,19 +233,89 @@ describe("publishing shell scripts (offline)", () => {
     expect(calls).not.toContain("stage ");
   });
 
-  it("live-version uses the first invite and never prints it", async () => {
+  it("live-version sends the first invite on stdin, never in curl arguments or output", async () => {
     const f = await shellFixture();
     const result = f.run("live-version.sh");
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toBe("source-version\n");
     expect(result.stderr).not.toContain("test-token");
     const args = await readFile(f.curlArgs, "utf8");
-    expect(args).toContain("Cookie: invite=test-token");
+    expect(args).not.toContain("test-token");
+    expect(args).toContain("--header\n@-\n");
     expect(args).toContain("https://example.invalid/api/version");
     expect(args).not.toContain("wrong-token");
+    expect(await readFile(f.curlStdin, "utf8")).toBe("Cookie: invite=test-token\n");
   });
 
-  it("live-version fails on HTTP errors, invalid responses, or missing invites", async () => {
+  it.each(["403", "404", "500"])("live-version reports HTTP %s without the token or body", async (status) => {
+    const f = await shellFixture();
+    const result = f.run("live-version.sh", [], {
+      HTTP_STATUS: status, LIVE_BODY: '{"version":"source-version","detail":"private body test-token"}',
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(`Live version request failed: HTTP ${status}\n`);
+    expect(await readFile(f.curlArgs, "utf8")).not.toContain("test-token");
+  });
+
+  it.each(["403", "404"])("publish includes HTTP %s in its final retry error", async (status) => {
+    const f = await shellFixture();
+    const result = f.run("publish.sh", [], {
+      STUB_DEPLOY: "1", HTTP_STATUS: status, LIVE_BODY: "private body test-token",
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe(`Live version unreachable does not match source-version: Live version request failed: HTTP ${status}\n`);
+    expect(result.stdout).not.toMatch(/private body|test-token|Live and current/);
+    const calls = (await readFile(f.calls, "utf8")).trim().split("\n");
+    expect(calls.filter((call) => call === "curl")).toHaveLength(12);
+    expect(calls.filter((call) => call === "sleep 5")).toHaveLength(11);
+    expect(calls.join("\n")).not.toContain("--write");
+    await expect(access(path.join(f.corpus, "published.json"))).rejects.toThrow();
+    expect(await readdir(f.tmp)).toEqual([".keep"]);
+  });
+
+  it("publish includes only the last stderr line from the last failed attempt", async () => {
+    const f = await shellFixture();
+    await f.executable(f.repo, "scripts/live-version.sh", `#!/usr/bin/env bash
+attempt=0
+if [[ -f "$TMPDIR/attempt" ]]; then read -r attempt < "$TMPDIR/attempt"; fi
+attempt=$((attempt + 1))
+printf '%s\\n' "$attempt" > "$TMPDIR/attempt"
+printf 'Earlier diagnostic\\nLast diagnostic %s\\n' "$attempt" >&2
+exit 1
+`);
+    const result = f.run("publish.sh", [], { STUB_DEPLOY: "1" });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("Live version unreachable does not match source-version: Last diagnostic 12\n");
+  });
+
+  it("publish records the live version in published.json on success", async () => {
+    const f = await shellFixture();
+    const result = f.run("publish.sh", [], { STUB_DEPLOY: "1" });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Live and current: source-version");
+    const written = JSON.parse(await readFile(path.join(f.corpus, "published.json"), "utf8"));
+    expect(written.version).toBe("source-version");
+  });
+
+  it("publish fails when the corpus changed between the report and the write", async () => {
+    const f = await shellFixture();
+    const result = f.run("publish.sh", [], { STUB_DEPLOY: "1", WRITTEN_VERSION: "newer-version" });
+    expect(result.status).toBe(1);
+    expect(result.stdout).not.toContain("Live and current");
+    expect(result.stderr).toContain("Corpus changed during publish; rerun publish.sh");
+  });
+
+  it("publish reports a reachable version mismatch without an empty diagnostic", async () => {
+    const f = await shellFixture();
+    const result = f.run("publish.sh", [], { STUB_DEPLOY: "1", LIVE_BODY: '{"version":"old-version"}' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("Live version old-version does not match source-version\n");
+    expect(await readFile(f.calls, "utf8")).not.toContain("--write");
+    expect(await readdir(f.tmp)).toEqual([".keep"]);
+  });
+
+  it("live-version fails on transport errors, invalid responses, or missing invites", async () => {
     const f = await shellFixture();
     for (const overrides of [{ CURL_FAIL: "1" }, { LIVE_BODY: "not JSON" },
       { LIVE_BODY: "{}" }, { LIVE_BODY: '{"version":""}' }, { LIVE_BODY: '{"version":42}' }]) {
