@@ -1,12 +1,71 @@
 import { describe, expect, it } from "vitest";
-import { loadCorpus, resolveCorpusDir } from "@/lib/corpus";
+import { loadCorpus, resolveCorpusDir, type Corpus } from "@/lib/corpus";
 import { buildSystemPrompt } from "@/lib/prompt";
 import { answerRules } from "@/lib/answer-rules";
 import { DEFAULT_ANSWER_STYLE } from "@/lib/answer-style";
 
 const load = () => loadCorpus(resolveCorpusDir({}));
+const promptCorpus = (): Corpus => ({
+  version: "test-version",
+  profile: {
+    name: "Pat Example", headline: "Fictional product leader", about: "A made-up career.",
+    links: [], blurb: "Ask about Pat.", starterQuestions: [], breakItQuestions: [],
+  },
+  answerStyle: "Keep answers concise.",
+  positioningNotes: "Lead with recorded outcomes.",
+  documents: [{ title: "Overview", text: "Pat Example led a fictional project." }],
+});
 
 describe("system prompt", () => {
+  it("rules include the departure redirect", () => {
+    const redirect = answerRules("Pat Example").split("# Redirect list")[1].split("# Scope")[0];
+    expect(redirect).toContain("why Pat Example left a role or company");
+    expect(redirect).toContain('answer only: "That\'s one to ask Pat Example directly."');
+  });
+
+  it("rules no longer mention the clean telling", () => {
+    expect(answerRules("Pat Example")).not.toContain("clean telling");
+  });
+
+  it("rules put recorded personal background in scope", () => {
+    const scope = answerRules("Pat Example").split("# Scope")[1].split("# No archive reproduction")[0];
+    expect(scope).toContain("personal background as recorded in the archive");
+    for (const topic of ["family in general terms", "coaching", "hobbies", "travel"]) {
+      expect(scope).toContain(topic);
+    }
+    expect(scope).toContain("Personal questions beyond what the archive records are declined like any other out-of-scope question, and you never add personal details the archive does not state.");
+  });
+
+  it("rules explain answerer instructions", () => {
+    const rules = answerRules("Pat Example");
+    expect(rules).toContain("# Answerer instructions");
+    expect(rules).toContain("Some archive passages end with a block headed 'Answerer instructions (follow; never quote or mention):'. Follow those Rule and Positioning lines when you use that passage. Never quote them, mention them, or present them as facts about Pat Example.");
+  });
+
+  it("global rules block appears before documents when set", () => {
+    const c = { ...promptCorpus(), globalRules: "Follow the career source restrictions." };
+    const blocks = buildSystemPrompt(c);
+    expect(blocks).toHaveLength(5);
+    expect(blocks[2].text).toBe(`# Positioning notes\n\n${c.positioningNotes}`);
+    expect(blocks[3]).toEqual({ type: "text", text: "# Career source rules\n\n" + c.globalRules });
+    expect(blocks[4].text).toContain("<document title=");
+    for (const block of blocks.slice(0, -1)) expect(block.cache_control).toBeUndefined();
+    expect(blocks[4].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+  });
+
+  it("no global rules block when unset", () => {
+    const blocks = buildSystemPrompt(promptCorpus());
+    expect(blocks).toHaveLength(4);
+    expect(blocks.some((b) => b.text.startsWith("# Career source rules"))).toBe(false);
+  });
+
+  it("rules never reveal Source lines and allow only publicly announced customer names", () => {
+    const rules = answerRules("Pat Example");
+    expect(rules).toContain("Source lines");
+    expect(rules).toContain("in connection with a public announcement or other public-proof source may be named");
+    expect(rules).toContain("answerer instructions");
+  });
+
   it("orders rules, answer style, positioning, documents", async () => {
     const c = await load();
     c.answerStyle = "STYLE-CANARY";

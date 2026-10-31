@@ -16,6 +16,9 @@ export function buildSystemPrompt(corpus: Corpus): Anthropic.Beta.BetaTextBlockP
     { type: "text", text: answerRules(corpus.profile.name) },
     { type: "text", text: `# Answer style\n\n${corpus.answerStyle}` },
     { type: "text", text: `# Positioning notes\n\n${corpus.positioningNotes}` },
+    ...(corpus.globalRules !== undefined
+      ? [{ type: "text" as const, text: "# Career source rules\n\n" + corpus.globalRules }]
+      : []),
     { type: "text", text: docs, cache_control: { type: "ephemeral", ttl: "1h" } },
   ];
 }
