@@ -1,14 +1,11 @@
-.menu { display: flex; flex-direction: column; gap: var(--space-4); min-height: 0; margin: calc(var(--sidebar-inset) * -1); padding: var(--sidebar-inset); overflow-y: auto; }
+.menu { display: flex; flex-direction: column; gap: var(--menu-item-gap); min-height: 0; margin: calc(var(--sidebar-inset) * -1); padding: var(--sidebar-inset); overflow-y: auto; }
 .menu[hidden] { display: none; }
 .menu > * { flex: 0 0 auto; }
 .heading { margin: 0 0 var(--space-2); font-size: var(--font-size-heading); }
-.action, .close { min-height: var(--tap-target-min); padding: var(--space-2) var(--space-3); font: inherit; font-weight: 600; color: var(--color-accent); background: var(--color-card); border: 1px solid var(--color-border); border-radius: var(--radius-input); cursor: pointer; }
-.action { text-align: left; }
-.action:hover:not(:disabled), .close:hover { background: var(--color-accent-soft); }
-.action:disabled { color: var(--color-muted); cursor: not-allowed; }
-.close { align-self: flex-end; font-size: var(--font-size-title); }
-.link { font-weight: 600; }
-.action:focus-visible, .close:focus-visible, .link:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+/* Top-level item styling lives in MenuItem.module.css. */
+.close { align-self: flex-end; min-height: var(--tap-target-min); padding: var(--space-2) var(--space-3); font: inherit; font-size: var(--font-size-title); font-weight: 600; color: var(--color-accent); background: var(--color-card); border: 1px solid var(--color-border); border-radius: var(--radius-input); cursor: pointer; }
+.close:hover { background: var(--color-accent-soft); }
+.close:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .backdrop { display: none; }
 @media (width <= 768px) {
   .menu { position: fixed; inset: 0 auto 0 0; z-index: 20; width: min(var(--layout-sidebar-width), calc(100% - var(--space-6))); margin: 0; padding: var(--space-4); background: var(--color-page); box-shadow: var(--shadow-card); overscroll-behavior: contain; animation: slideIn 0.2s ease-out; }

@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { BreakItQuestions, TryAskingQuestions } from "./ExampleQuestions";
 import styles from "./SideMenu.module.css";
+import menuItem from "./MenuItem.module.css";
 
 type Props = {
   open: boolean;
@@ -67,13 +68,13 @@ export function SideMenu({ open, pinned, onClose, onClear, clearDisabled, candid
         {!pinned && (
           <button ref={closeRef} type="button" className={styles.close} aria-label="Close menu" onClick={onClose}>×</button>
         )}
-        <Link href="/about" className={styles.link} onClick={() => { if (!pinned) onClose(); }}>About {firstName}</Link>
-        <Link href="/how-it-works" className={styles.link} onClick={() => { if (!pinned) onClose(); }}>How CV-AI Works</Link>
+        <Link href="/about" className={menuItem.item} onClick={() => { if (!pinned) onClose(); }}>About {firstName}</Link>
+        <Link href="/how-it-works" className={menuItem.item} onClick={() => { if (!pinned) onClose(); }}>How CV-AI Works</Link>
         <TryAskingQuestions questions={starterQuestions} disabled={pickDisabled} onPick={onPick} />
         <BreakItQuestions breakItQuestions={breakItQuestions} disabled={pickDisabled} onPick={onPick} />
         <button
           type="button"
-          className={styles.action}
+          className={menuItem.item}
           disabled={clearDisabled}
           onClick={() => {
             onClear();

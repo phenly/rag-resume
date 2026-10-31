@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { AskPanel } from "./AskPanel";
+import { ChatProvider, useChat, useOptionalChat } from "./ChatProvider";
 import { SideMenu } from "./SideMenu";
 import styles from "./ChatApp.module.css";
 
@@ -17,7 +18,18 @@ type Props = {
   blurb: string;
 };
 
-export function ChatApp({ breakItQuestions, starterQuestions, candidateName, photoUrl, blurb }: Props) {
+/** Uses the layout's ChatProvider when there is one; otherwise (tests, standalone use) brings its own. */
+export function ChatApp(props: Props) {
+  const shared = useOptionalChat();
+  if (shared) return <ChatShell {...props} />;
+  return (
+    <ChatProvider>
+      <ChatShell {...props} />
+    </ChatProvider>
+  );
+}
+
+function ChatShell({ breakItQuestions, starterQuestions, candidateName, photoUrl, blurb }: Props) {
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const subscribeToViewport = useCallback((onChange: () => void) => {
     const media = window.matchMedia(DESKTOP_QUERY);
@@ -37,10 +49,7 @@ export function ChatApp({ breakItQuestions, starterQuestions, candidateName, pho
   const auto = viewport === null;
   const pinned = viewport ?? true;
   const [menu, setMenu] = useState({ pinned, open: pinned });
-  const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
-  // Remounting AskPanel drops its cards and signed history, so Clear chat is just a new key.
-  const [chatKey, setChatKey] = useState(0);
+  const { setInput, busy, clear } = useChat();
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Crossing the breakpoint restores that layout's default menu state.
@@ -88,10 +97,7 @@ export function ChatApp({ breakItQuestions, starterQuestions, candidateName, pho
           pinned={pinned}
           onClose={closeMenu}
           auto={auto}
-          onClear={() => {
-            setChatKey((k) => k + 1);
-            setInput("");
-          }}
+          onClear={clear}
           clearDisabled={busy}
           candidateName={candidateName}
           starterQuestions={starterQuestions}
@@ -104,16 +110,11 @@ export function ChatApp({ breakItQuestions, starterQuestions, candidateName, pho
         />
         <section className={styles.main} inert={open && !pinned}>
           <AskPanel
-            key={chatKey}
             candidateName={candidateName}
             photoUrl={photoUrl}
             blurb={blurb}
             starterQuestions={starterQuestions}
             onPick={fill}
-            input={input}
-            onInputChange={setInput}
-            busy={busy}
-            onBusyChange={setBusy}
             inputRef={inputRef}
           />
         </section>

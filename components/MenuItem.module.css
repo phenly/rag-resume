@@ -1,0 +1,5 @@
+/* One style for every top-level side-menu item: About, How CV-AI Works, both "Try…" toggles, Clear chat. */
+.item { display: flex; align-items: center; width: 100%; min-height: var(--tap-target-min); margin: 0; padding: var(--menu-item-padding); font: inherit; font-size: var(--menu-item-font-size); font-weight: var(--menu-item-font-weight); line-height: var(--menu-item-line-height); text-align: left; text-decoration: none; color: var(--menu-item-color); background: none; border: 0; border-radius: var(--radius-input); cursor: pointer; }
+.item:hover:not(:disabled) { background: var(--menu-item-hover-background); }
+.item:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.item:disabled { color: var(--color-muted); cursor: not-allowed; }

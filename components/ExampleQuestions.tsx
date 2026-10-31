@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import styles from "./ExampleQuestions.module.css";
+import menuItem from "./MenuItem.module.css";
 
 type DisclosureProps = {
   label: string;
@@ -33,7 +34,7 @@ function QuestionDisclosure({ label, id, questions, variant, disabled, onPick }:
     <div>
       <button
         type="button"
-        className={`${styles.toggle} ${styles.breakToggle} ${breakIt ? "" : styles.askToggle}`}
+        className={menuItem.item}
         aria-expanded={show}
         aria-controls={id}
         onClick={() => setShow((v) => !v)}

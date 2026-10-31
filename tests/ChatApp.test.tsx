@@ -119,6 +119,23 @@ describe("ChatApp", () => {
     expect(within(menu).queryByText("Engineering leader")).toBeNull();
   });
 
+  it("all five top-level menu items share one item style; nested question chips do not", () => {
+    render(<ChatApp {...props} />);
+    const menu = screen.getByRole("complementary", { name: "Menu" });
+    const items = [
+      within(menu).getByRole("link", { name: "About Jordan" }),
+      within(menu).getByRole("link", { name: "How CV-AI Works" }),
+      within(menu).getByRole("button", { name: "Try asking (2)" }),
+      within(menu).getByRole("button", { name: "Try to break it (1)" }),
+      within(menu).getByRole("button", { name: "Clear chat" }),
+    ];
+    const shared = [...items[0].classList].filter((c) => items.every((el) => el.classList.contains(c)));
+    expect(shared.some((c) => /item/i.test(c))).toBe(true);
+    fireEvent.click(items[3]);
+    const chip = within(menu).getByRole("button", { name: "Break it?" });
+    expect(shared.some((c) => chip.classList.contains(c))).toBe(false);
+  });
+
   it("returns focus to Menu when resizing to phone hides a focused sidebar control", () => {
     const resize = stubMatchMedia(true);
     render(<ChatApp {...props} />);
