@@ -2,6 +2,7 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { DEFAULT_ANSWER_STYLE } from "./answer-style";
 import { redactContacts } from "./redact";
+import { corpusVersion } from "./corpus-version";
 
 export type Profile = {
   name: string;
@@ -15,9 +16,11 @@ export type Profile = {
 };
 export type CorpusDocument = { title: string; text: string }; // text already redacted
 export type Corpus = {
+  version: string;
   profile: Profile;
   answerStyle: string;
   positioningNotes: string;
+  globalRules?: string;
   documents: CorpusDocument[];
   photoPath?: string; // absolute real path, validated; undefined when profile has no photo
 };
@@ -70,8 +73,17 @@ type Manifest = {
   profile: string;
   answerStyle?: string;
   positioningNotes: string;
+  documentsFrom?: string;
   documents: { title: string; path: string }[];
 };
+
+function validateDocuments(documents: unknown, label: string): asserts documents is Manifest["documents"] {
+  if (!Array.isArray(documents)) throw new CorpusError(`${label}: documents must be an array`);
+  documents.forEach((d, i) => {
+    if (!isObj(d) || !isNonEmpty(d.title) || !isNonEmpty(d.path))
+      throw new CorpusError(`${label}: documents[${i}] needs a non-empty title and path`);
+  });
+}
 
 function validateManifest(m: unknown): Manifest {
   if (!isObj(m)) throw new CorpusError("corpus.json must be an object");
@@ -80,12 +92,17 @@ function validateManifest(m: unknown): Manifest {
     throw new CorpusError("corpus.json: positioningNotes must be a file path string");
   if (m.answerStyle !== undefined && !isNonEmpty(m.answerStyle))
     throw new CorpusError("corpus.json: answerStyle must be a file path string");
-  if (!Array.isArray(m.documents)) throw new CorpusError("corpus.json: documents must be an array");
-  m.documents.forEach((d, i) => {
-    if (!isObj(d) || !isNonEmpty(d.title) || !isNonEmpty(d.path))
-      throw new CorpusError(`corpus.json: documents[${i}] needs a non-empty title and path`);
-  });
+  if (m.documentsFrom !== undefined && !isNonEmpty(m.documentsFrom))
+    throw new CorpusError("corpus.json: documentsFrom must be a file path string");
+  validateDocuments(m.documents, "corpus.json");
   return m as Manifest;
+}
+
+function validateBotExport(m: unknown): { documents: Manifest["documents"]; rules: string } {
+  if (!isObj(m)) throw new CorpusError("bot-export.json must be an object");
+  if (!isNonEmpty(m.rules)) throw new CorpusError("bot-export.json: rules must be a file path string");
+  validateDocuments(m.documents, "bot-export.json");
+  return { documents: m.documents, rules: m.rules };
 }
 
 function validateProfile(p: unknown): Profile {
@@ -165,6 +182,27 @@ export async function loadCorpus(dir: string): Promise<Corpus> {
     const raw = await readText(dir, entry.path, `document "${entry.title}"`, entry.title);
     documents.push({ title: entry.title, text: redactContacts(raw) });
   }
+  let globalRules: string | undefined;
+  if (manifest.documentsFrom !== undefined) {
+    const exported = validateBotExport(
+      parseJson(await readText(dir, manifest.documentsFrom, "documentsFrom"), "documentsFrom"),
+    );
+    const exportDir = path.dirname(path.resolve(dir, manifest.documentsFrom));
+    globalRules = await readText(exportDir, exported.rules, "global rules");
+    for (const entry of exported.documents) {
+      const raw = await readText(exportDir, entry.path, `document "${entry.title}"`, entry.title);
+      documents.push({ title: entry.title, text: redactContacts(raw) });
+    }
+  }
   const photoPath = profile.photo ? await resolvePhoto(dir, profile.photo) : undefined;
-  return { profile, answerStyle, positioningNotes, documents, photoPath };
+  let photoBytes: Buffer | null = null;
+  if (photoPath) {
+    try {
+      photoBytes = await readFile(photoPath);
+    } catch {
+      throw new CorpusError("Corpus profile photo is missing or unreadable", { detail: photoPath });
+    }
+  }
+  const content = { profile, answerStyle, positioningNotes, globalRules, documents };
+  return { ...content, photoPath, version: corpusVersion(content, photoBytes) };
 }

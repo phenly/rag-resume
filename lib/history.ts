@@ -1,28 +1,28 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
-/** One finished exchange. `sig` proves the server produced `answer` for `question`. */
+/** One finished exchange. `sig` binds the server's answer to the question and corpus version. */
 export type Turn = { question: string; answer: string; sig: string };
 
 export const MAX_HISTORY_TURNS = 6;
 /** Cap on the sum of question + answer lengths across all turns sent back. */
 export const MAX_HISTORY_CHARS = 16000;
 
-export function signTurn(question: string, answer: string, secret: string): string {
-  return createHmac("sha256", secret).update(JSON.stringify([question, answer])).digest("hex");
+export function signTurn(question: string, answer: string, secret: string, version: string): string {
+  return createHmac("sha256", secret).update(JSON.stringify([version, question, answer])).digest("hex");
 }
 
 export type ParsedHistory =
   | { ok: true; turns: Turn[] }
   | { ok: false; reason: "shape" | "limit" | "signature" };
 
-function validSig(question: string, answer: string, sig: string, secret: string): boolean {
-  const expected = Buffer.from(signTurn(question, answer, secret), "hex");
+function validSig(question: string, answer: string, sig: string, secret: string, version: string): boolean {
+  const expected = Buffer.from(signTurn(question, answer, secret, version), "hex");
   const given = Buffer.from(sig, "hex");
   // Length check first: timingSafeEqual throws on unequal lengths. Non-hex input decodes short/empty.
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
 
-export function parseHistory(raw: unknown, secret: string): ParsedHistory {
+export function parseHistory(raw: unknown, secret: string, version: string): ParsedHistory {
   if (raw === undefined) return { ok: true, turns: [] };
   if (!Array.isArray(raw)) return { ok: false, reason: "shape" };
   if (raw.length > MAX_HISTORY_TURNS) return { ok: false, reason: "limit" };
@@ -39,7 +39,7 @@ export function parseHistory(raw: unknown, secret: string): ParsedHistory {
   }
   if (chars > MAX_HISTORY_CHARS) return { ok: false, reason: "limit" };
   for (const t of turns) {
-    if (!validSig(t.question, t.answer, t.sig, secret)) return { ok: false, reason: "signature" };
+    if (!validSig(t.question, t.answer, t.sig, secret, version)) return { ok: false, reason: "signature" };
   }
   return { ok: true, turns };
 }

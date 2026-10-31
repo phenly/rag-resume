@@ -4,15 +4,68 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { CorpusError, loadCorpus, resolveCorpusDir } from "@/lib/corpus";
 import { DEFAULT_ANSWER_STYLE } from "@/lib/answer-style";
+import { corpusFixture } from "./fixtures/corpus";
 
 const sampleDir = resolveCorpusDir({});
 
 describe("corpus", () => {
+  it("documentsFrom picks up every listed file", async () => {
+    const f = await corpusFixture();
+    const c = await loadCorpus(f.dir);
+    expect(c.profile.name).toBe("Pat Example");
+    expect(c.documents.map((d) => d.title)).toEqual(["Overview", "Company One", "Company Two", "Company Three"]);
+    for (const doc of f.exported.documents) {
+      expect(c.documents.find((d) => d.title === doc.title)?.text).toBe(await readFile(path.join(f.sourceDir, doc.path), "utf8"));
+    }
+    // A new source company needs no edit to corpus.json.
+    const newDoc = { title: "Company Four", path: "companies/four.md" };
+    await f.put(f.sourceDir, newDoc.path, "Pat Example's next fictional role.");
+    await f.put(f.sourceDir, "bot-export.json", JSON.stringify({ ...f.exported, documents: [...f.exported.documents, newDoc] }));
+    expect((await loadCorpus(f.dir)).documents.at(-1)).toEqual({ title: newDoc.title, text: "Pat Example's next fictional role." });
+    expect(JSON.parse(await readFile(path.join(f.dir, "corpus.json"), "utf8"))).toEqual(f.manifest);
+  });
+
+  it("globalRules loaded from documentsFrom rules", async () => {
+    const f = await corpusFixture();
+    expect((await loadCorpus(f.dir)).globalRules).toBe(f.globalRules);
+  });
+
+  it("missing documentsFrom file is a CorpusError", async () => {
+    const f = await corpusFixture();
+    await f.put(f.dir, "corpus.json", JSON.stringify({ ...f.manifest, documentsFrom: "missing.json" }));
+    await expect(loadCorpus(f.dir)).rejects.toBeInstanceOf(CorpusError);
+  });
+
+  it.each([null, "", "  ", 5])("rejects invalid documentsFrom: %j", async (documentsFrom) => {
+    const f = await corpusFixture();
+    await f.put(f.dir, "corpus.json", JSON.stringify({ ...f.manifest, documentsFrom }));
+    await expect(loadCorpus(f.dir)).rejects.toBeInstanceOf(CorpusError);
+  });
+
+  it.each([
+    "{broken", "null", JSON.stringify({ documents: [], rules: "" }),
+    JSON.stringify({ documents: [], rules: 5 }), JSON.stringify({ rules: "rules.md" }),
+    JSON.stringify({ documents: [{ title: "Missing path" }], rules: "rules.md" }),
+  ])("rejects a malformed bot-export manifest: %s", async (contents) => {
+    const f = await corpusFixture();
+    await f.put(f.sourceDir, "bot-export.json", contents);
+    await expect(loadCorpus(f.dir)).rejects.toBeInstanceOf(CorpusError);
+  });
+
+  it("fails when an exported document or rules file is missing", async () => {
+    const f = await corpusFixture();
+    await f.put(f.sourceDir, "bot-export.json", JSON.stringify({ ...f.exported, rules: "missing-rules.md" }));
+    await expect(loadCorpus(f.dir)).rejects.toBeInstanceOf(CorpusError);
+    await f.put(f.sourceDir, "bot-export.json", JSON.stringify({ ...f.exported, documents: [{ title: "Missing", path: "missing.md" }] }));
+    await expect(loadCorpus(f.dir)).rejects.toMatchObject({ name: "CorpusError", entryTitle: "Missing" });
+  });
+
   it("loads the sample corpus", async () => {
     const c = await loadCorpus(sampleDir);
     expect(c.profile.name).toBe("Jordan Example");
     expect(c.documents).toHaveLength(4);
     expect(c.profile.starterQuestions).toHaveLength(5);
+    expect(c.globalRules).toBeUndefined();
   });
 
   it("redacts contact details in every document", async () => {

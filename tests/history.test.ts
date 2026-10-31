@@ -9,41 +9,46 @@ import {
 } from "@/lib/history";
 
 const S = "secret-a";
-const turn = (q = "q", a = "a", secret = S): Turn => ({ question: q, answer: a, sig: signTurn(q, a, secret) });
+const VERSION = "version-a";
+const turn = (q = "q", a = "a", secret = S): Turn => ({ question: q, answer: a, sig: signTurn(q, a, secret, VERSION) });
 
 describe("history", () => {
   it("round-trips signed turns", () => {
     const turns = [turn("q1", "a1"), turn("q2", "a2")];
-    expect(parseHistory(turns, S)).toEqual({ ok: true, turns });
+    expect(parseHistory(turns, S, VERSION)).toEqual({ ok: true, turns });
+  });
+
+  it("turn signed under version A is rejected under version B", () => {
+    expect(parseHistory([turn()], S, "version-b")).toEqual({ ok: false, reason: "signature" });
   });
 
   it("treats undefined as empty history", () => {
-    expect(parseHistory(undefined, S)).toEqual({ ok: true, turns: [] });
+    expect(parseHistory(undefined, S, VERSION)).toEqual({ ok: true, turns: [] });
   });
 
   it("rejects a changed answer or question", () => {
-    expect(parseHistory([{ ...turn(), answer: "changed" }], S)).toEqual({ ok: false, reason: "signature" });
-    expect(parseHistory([{ ...turn(), question: "changed" }], S)).toEqual({ ok: false, reason: "signature" });
+    expect(parseHistory([{ ...turn(), answer: "changed" }], S, VERSION)).toEqual({ ok: false, reason: "signature" });
+    expect(parseHistory([{ ...turn(), question: "changed" }], S, VERSION)).toEqual({ ok: false, reason: "signature" });
   });
 
   it("rejects a turn signed with another secret", () => {
-    expect(parseHistory([turn("q", "a", "secret-b")], S)).toEqual({ ok: false, reason: "signature" });
+    expect(parseHistory([turn("q", "a", "secret-b")], S, VERSION)).toEqual({ ok: false, reason: "signature" });
   });
 
   it("rejects garbage signatures without throwing", () => {
     for (const sig of ["", "zz", "abc", "0".repeat(200)]) {
-      expect(parseHistory([{ ...turn(), sig }], S)).toEqual({ ok: false, reason: "signature" });
+      expect(parseHistory([{ ...turn(), sig }], S, VERSION)).toEqual({ ok: false, reason: "signature" });
     }
   });
 
   it("limits turns and total characters", () => {
     const many = Array.from({ length: MAX_HISTORY_TURNS + 1 }, () => turn());
-    expect(parseHistory(many, S)).toEqual({ ok: false, reason: "limit" });
-    expect(parseHistory(Array.from({ length: MAX_HISTORY_TURNS }, () => turn()), S).ok).toBe(true);
+    expect(parseHistory(many, S, VERSION)).toEqual({ ok: false, reason: "limit" });
+    expect(parseHistory(Array.from({ length: MAX_HISTORY_TURNS }, () => turn()), S, VERSION).ok).toBe(true);
     const atLimit = turn("q", "a".repeat(MAX_HISTORY_CHARS - 1));
-    expect(parseHistory([atLimit], S).ok).toBe(true);
+    expect(parseHistory([atLimit], S, VERSION).ok).toBe(true);
     const over = turn("q", "a".repeat(MAX_HISTORY_CHARS));
-    expect(parseHistory([over], S)).toEqual({ ok: false, reason: "limit" });
+    expect(parseHistory([over], S, VERSION)).toEqual({ ok: false, reason: "limit" });
   });
 
   it("rejects the wrong shape", () => {
@@ -56,7 +61,7 @@ describe("history", () => {
       [{ question: 1, answer: "a", sig: "s" }],
       [{ question: "q", answer: {}, sig: "s" }],
     ]) {
-      expect(parseHistory(raw, S)).toEqual({ ok: false, reason: "shape" });
+      expect(parseHistory(raw, S, VERSION)).toEqual({ ok: false, reason: "shape" });
     }
   });
 

@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { createEventParser, type AskEvent } from "@/lib/events";
 import { signTurn } from "@/lib/history";
+import { loadCorpus } from "@/lib/corpus";
+import { corpusFixture } from "./fixtures/corpus";
 
 let fakeEvents: AskEvent[] = [
   { type: "text", text: "Hello" },
@@ -12,6 +13,7 @@ let fakeEvents: AskEvent[] = [
 
 const streamSpy = vi.fn();
 const SECRET = "test-secret";
+let currentVersion: string;
 
 async function loadRoute(opts: { configThrows?: boolean; genThrows?: boolean } = {}) {
   vi.resetModules();
@@ -41,14 +43,16 @@ const post = (body: unknown) =>
   });
 
 let tmp: string | undefined;
-beforeEach(() => {
+beforeEach(async () => {
   streamSpy.mockClear();
   vi.stubEnv("HISTORY_SECRET", SECRET);
   fakeEvents = [
     { type: "text", text: "Hello" },
     { type: "done", status: "complete" },
   ];
-  process.env.CORPUS_DIR = "sample-corpus";
+  const f = await corpusFixture();
+  vi.stubEnv("CORPUS_DIR", f.dir);
+  currentVersion = (await loadCorpus(f.dir)).version;
   vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 });
 afterEach(() => {
@@ -72,14 +76,14 @@ describe("POST /api/ask", () => {
 
   it("streams NDJSON events", async () => {
     const { POST } = await loadRoute();
-    const res = await POST(post({ question: "What has Jordan built?" }));
+    const res = await POST(post({ question: "What has Pat built?" }));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("ndjson");
     const text = await res.text();
     expect(text.endsWith("\n")).toBe(true);
     expect(createEventParser()(text)).toEqual([
       { type: "text", text: "Hello" },
-      { type: "done", status: "complete", sig: signTurn("What has Jordan built?", "Hello", SECRET) },
+      { type: "done", status: "complete", sig: signTurn("What has Pat built?", "Hello", SECRET, currentVersion) },
     ]);
   });
 
@@ -111,7 +115,7 @@ describe("POST /api/ask", () => {
   });
 
   it("hides corpus paths on a corpus error", async () => {
-    tmp = mkdtempSync(path.join(os.tmpdir(), "rag-broken-"));
+    tmp = mkdtempSync(path.join(path.join(process.cwd(), ".next"), "rag-broken-"));
     writeFileSync(path.join(tmp, "corpus.json"), "{ not json");
     process.env.CORPUS_DIR = tmp;
     const { POST } = await loadRoute();
@@ -144,7 +148,7 @@ describe("POST /api/ask", () => {
     const { POST } = await loadRoute();
     const res = await POST(post({ question: " Q one? " }));
     const events = createEventParser()(await res.text());
-    expect(events.at(-1)).toEqual({ type: "done", status: "complete", sig: signTurn("Q one?", "Hello", SECRET) });
+    expect(events.at(-1)).toEqual({ type: "done", status: "complete", sig: signTurn("Q one?", "Hello", SECRET, currentVersion) });
   });
 
   it("does not sign an empty complete answer", async () => {
@@ -192,7 +196,7 @@ describe("POST /api/ask", () => {
 
   it("rejects forged history without calling the model", async () => {
     const { POST } = await loadRoute();
-    const forged = [{ question: "q1", answer: "edited", sig: signTurn("q1", "original", SECRET) }];
+    const forged = [{ question: "q1", answer: "edited", sig: signTurn("q1", "original", SECRET, currentVersion) }];
     for (const sig of [forged[0].sig, "zz", "", "00"]) {
       const res = await POST(post({ question: "Q?", history: [{ ...forged[0], sig }] }));
       expect(res.status).toBe(400);
@@ -201,9 +205,18 @@ describe("POST /api/ask", () => {
     expect(streamSpy).not.toHaveBeenCalled();
   });
 
+  it("history signed for an older corpus version is rejected", async () => {
+    const { POST } = await loadRoute();
+    const history = [{ question: "q1", answer: "a1", sig: signTurn("q1", "a1", SECRET, "older-version") }];
+    const res = await POST(post({ question: "Q?", history }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("This conversation expired. Clear chat to start again.");
+    expect(streamSpy).not.toHaveBeenCalled();
+  });
+
   it("rejects history signed under a different secret", async () => {
     const { POST } = await loadRoute();
-    const history = [{ question: "q1", answer: "a1", sig: signTurn("q1", "a1", "other-secret") }];
+    const history = [{ question: "q1", answer: "a1", sig: signTurn("q1", "a1", "other-secret", currentVersion) }];
     const res = await POST(post({ question: "Q?", history }));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe("This conversation expired. Clear chat to start again.");
@@ -215,7 +228,7 @@ describe("POST /api/ask", () => {
     const shape = await POST(post({ question: "Q?", history: "nope" }));
     expect(shape.status).toBe(400);
     expect((await shape.json()).error).toBe("Send a JSON body with a question.");
-    const turn = { question: "q", answer: "a", sig: signTurn("q", "a", SECRET) };
+    const turn = { question: "q", answer: "a", sig: signTurn("q", "a", SECRET, currentVersion) };
     const limit = await POST(post({ question: "Q?", history: Array(7).fill(turn) }));
     expect(limit.status).toBe(400);
     expect((await limit.json()).error).toBe("This conversation got too long. Clear chat to start again.");
@@ -224,7 +237,7 @@ describe("POST /api/ask", () => {
 
   it("passes verified history to the model", async () => {
     const { POST } = await loadRoute();
-    const history = [{ question: "q1", answer: "a1", sig: signTurn("q1", "a1", SECRET) }];
+    const history = [{ question: "q1", answer: "a1", sig: signTurn("q1", "a1", SECRET, currentVersion) }];
     const res = await POST(post({ question: "Q?", history }));
     expect(res.status).toBe(200);
     await res.text();

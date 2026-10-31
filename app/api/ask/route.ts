@@ -11,8 +11,7 @@ type System = ReturnType<typeof buildSystemPrompt>;
 // The prompt is built once per cached corpus object (getCorpus caches successes only).
 let cached: { corpus: Corpus; system: System } | null = null;
 
-async function getSystem(): Promise<System> {
-  const corpus = await getCorpus();
+function getSystem(corpus: Corpus): System {
   if (!cached || cached.corpus !== corpus) cached = { corpus, system: buildSystemPrompt(corpus) };
   return cached.system;
 }
@@ -46,16 +45,16 @@ export async function POST(request: Request): Promise<Response> {
   }
   const secret = historySecret();
   if (secret === null) warnNoSecretOnce();
-  const history = secret === null ? { ok: true as const, turns: [] } : parseHistory(rawHistory, secret);
-  if (!history.ok) {
-    if (history.reason === "signature") return json(400, "This conversation expired. Clear chat to start again.");
-    if (history.reason === "limit") return json(400, "This conversation got too long. Clear chat to start again.");
-    return json(400, "Send a JSON body with a question.");
-  }
-
   try {
+    const corpus = await getCorpus();
+    const history = secret === null ? { ok: true as const, turns: [] } : parseHistory(rawHistory, secret, corpus.version);
+    if (!history.ok) {
+      if (history.reason === "signature") return json(400, "This conversation expired. Clear chat to start again.");
+      if (history.reason === "limit") return json(400, "This conversation got too long. Clear chat to start again.");
+      return json(400, "Send a JSON body with a question.");
+    }
     const config = readAskConfig();
-    const system = await getSystem();
+    const system = getSystem(corpus);
     const events = streamAnswer(q, system, config, undefined, request.signal, history.turns);
     let answer = "";
     const encoder = new TextEncoder();
@@ -67,7 +66,7 @@ export async function POST(request: Request): Promise<Response> {
           else {
             let ev: AskEvent = value;
             if (ev.type === "text") answer += ev.text;
-            else if (ev.type === "done" && ev.status === "complete" && secret !== null && answer.trim() !== "") ev = { ...ev, sig: signTurn(q, answer, secret) };
+            else if (ev.type === "done" && ev.status === "complete" && secret !== null && answer.trim() !== "") ev = { ...ev, sig: signTurn(q, answer, secret, corpus.version) };
             controller.enqueue(encoder.encode(encodeEvent(ev)));
           }
         } catch (err) {
