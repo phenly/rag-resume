@@ -40,7 +40,9 @@ export class CorpusError extends Error {
 /** CORPUS_DIR (relative values resolve against the repo root / cwd) or <repo>/sample-corpus. */
 export function resolveCorpusDir(env: Record<string, string | undefined> = process.env): string {
   const configured = env.CORPUS_DIR?.trim();
-  return path.resolve(process.cwd(), configured || "sample-corpus");
+  // The deploy bundles deploy-corpus/ explicitly (next.config.ts outputFileTracingIncludes), so
+  // tell Turbopack not to trace this runtime path, which otherwise pulls the whole repo into the server output.
+  return path.resolve(/*turbopackIgnore: true*/ process.cwd(), configured || "sample-corpus");
 }
 
 async function readText(dir: string, p: string, label: string, entryTitle?: string): Promise<string> {
