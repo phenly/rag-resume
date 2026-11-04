@@ -112,3 +112,23 @@ npm run test:live   # real Claude API calls: COSTS MONEY
 `scripts/leak-guard.sh` runs as a pre-commit hook. It blocks staged `.env*` files, Anthropic-style API keys, symlinks, and any line matching a case-insensitive fixed string listed in your own untracked `.leak-guard.local` (one per line). It reports the file and rule ID only, never the matched text.
 
 This is limited insurance, not a guarantee: it only sees staged added lines (it does not scan binary files such as photos), and only the patterns and markers it knows about. Review your diff before pushing.
+
+## Evaluation harness
+
+Run against the fictional sample corpus or set `CORPUS_DIR` to your private corpus. Keep results outside the repo: answers, judge reasoning, and matching patterns can contain private career material.
+
+```bash
+npm run eval -- --help
+CORPUS_DIR=sample-corpus npm run eval -- --cases eval/sample-cases.json --out /tmp/cv-ai-evals
+npm run eval -- --cases /private/path/cases.json --out /private/path/evals --approach both --only G1,L1 --concurrency 3
+```
+
+Case files use `{ "version": 1, "cases": [...] }`; see `eval/sample-cases.json` for the shared schema. Each case has `id`, `category`, `question`, `status`, `rubric`, `mustSay`, `mustNotSay`, `goldChunks`, and `source`. Regex patterns use JavaScript's case-insensitive flag. Status is `decided`, `default`, or `open`; categories are `grounded`, `tricky`, `not-in-notes`, `redirect`, `decline`, `personal`, `leak-probe`, or `adversarial`. Exported corpus gold IDs must exist in `career/bot-export.json`'s chunk index; the sample uses its inline atom IDs.
+
+The first question finishes before concurrent work starts (default three workers afterward). The whole approach reuses the app's corpus loader, cached prompt, configuration, streaming adapter, and usage accessor. `lib/eval/types.ts` defines `Approach`: `name`, `prepare(corpus)`, and `answer(question)`, returning text, usage, timings, optional retrieval IDs and rerank drops. Add a future RAG implementation through this boundary; today `--approach rag` reports **not built**, and `both` runs whole plus that placeholder.
+
+An API key is required for whole runs, including `--no-judge` (answers and exact token counting still call Anthropic). The forced-tool judge defaults to `claude-sonnet-5-5`; override `EVAL_JUDGE_MODEL`. Answer settings use the existing `RAG_MODEL`, `RAG_EFFORT`, and `RAG_MAX_TOKENS`. Prices live only in `lib/eval/pricing.ts`; unknown model prices produce `null` costs, never invented estimates. API calls retry at most twice for 429, 5xx, or overload errors; individual answer/judge errors are recorded. Failed stream attempts can incur charges without returning usage, so recorded dollars cover returned usage and may understate provider billing after errors/retries.
+
+Each run writes `YYYY-MM-DDTHHmm-<version8>/results.json` and `report.md`, plus a summary line in `runs.jsonl`; same-minute collisions get a numeric suffix. Times use UTC. Reports exclude `open` cases and **all leak probes** from pass rates, list leaks separately, and record unsupported claims as grounding findings. A pass requires all regex checks and `rubricMet`; unsupported claims are reported independently for review. Judge errors count as non-passes. `--no-judge` produces checks and `unjudged` results with no pass rate. No API calls occur with `--help`, and rag-only runs need no API key.
+
+Token totals come directly from the installed SDK token-count API for the exact `buildSystemPrompt` blocks, with no visitor question. Counts by part use independent API requests and may include framing overhead, so they need not sum to the combined total. Full profile JSON is counted separately as supplemental material: the live prompt currently uses only the profile name in generated answer rules. Token-count failures are recorded explicitly rather than replaced by estimates. RAG embedding cost, index freshness, retrieval recall/rank/unused chunks, rerank drops, and stage timings have reserved fields. Offline unit tests mock the Anthropic client; they never call live APIs.
