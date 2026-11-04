@@ -1,6 +1,9 @@
 # rag-resume
 
-A local-only Next.js page that answers questions about a candidate by sending their career archive to Claude. A visitor sees a profile card and a messaging-style chat: their question appears on the right, Claude's answer streams in on the left, and answers cite the notes they came from in a "Based on" line. Work in progress (alpha).
+> [!WARNING]
+> **Work in progress (alpha).** This is a personal project under active development, not a finished product. Expect rough edges, breaking changes to the corpus format, scripts, and settings, and documentation that may lag the code. There is no stability or support promise yet, and the RAG approach the name refers to is still being built (see [Evaluation harness](#evaluation-harness)).
+
+A local-only Next.js page that answers questions about a candidate by sending their career archive to Claude. A visitor sees a profile card and a messaging-style chat: their question appears on the right, Claude's answer streams in on the left, and answers cite the notes they came from in a "Based on" line.
 
 There is also a plain-language `/how-it-works` page explaining the flow for a non-technical reader.
 
