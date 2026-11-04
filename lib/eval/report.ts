@@ -13,10 +13,13 @@ export function summarize(a: ApproachResult) {
   const scored = a.cases.filter(eligible);
   const passing = scored.filter(r => r.status === 'pass').length;
   const judged = scored.filter(r => !['unjudged'].includes(r.status));
-  const sumCost = (key: 'answerDollars' | 'judgeDollars') => a.cases.some(r => r[key] === null) ? null : a.cases.reduce((s, r) => s + (r[key] ?? 0), 0);
+  const sumCost = (key: 'answerDollars' | 'judgeDollars', rows = a.cases) =>
+    rows.some(r => r[key] == null || (key === 'answerDollars' ? r.answerCostIncomplete : r.judgeCostIncomplete)) ? null : rows.reduce((s, r) => s + r[key]!, 0);
   const answerDollars = sumCost('answerDollars');
   const judgeDollars = sumCost('judgeDollars');
-  const usage = a.cases.flatMap(r => r.answer ? [r.answer.usage] : []);
+  const eligibleAnswerDollars = sumCost('answerDollars', scored);
+  const eligibleJudgeDollars = sumCost('judgeDollars', scored);
+  const usage = a.cases.flatMap(r => r.answer ? [r.answer.usage] : r.answerUsage ? [r.answerUsage] : []);
   const input = usage.reduce((s, u) => s + u.input_tokens + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0), 0);
   const speeds = Object.fromEntries(['cold', 'warm', 'uncached'].map(kind => {
     const answers = a.cases.flatMap(r => r.answer ? [r.answer] : []).filter(a =>
@@ -32,7 +35,9 @@ export function summarize(a: ApproachResult) {
     })),
     leakFailures: a.cases.filter(r => r.status === 'leak-failure').map(r => r.case.id),
     answerDollars, judgeDollars, totalDollars: answerDollars === null || judgeDollars === null ? null : answerDollars + judgeDollars,
-    dollarsPerPassingAnswer: passing && answerDollars !== null ? answerDollars / passing : null,
+    costIncomplete: answerDollars === null || judgeDollars === null,
+    knownDollars: a.cases.reduce((s, r) => s + (r.answerDollars ?? 0) + (r.judgeDollars ?? 0), 0),
+    dollarsPerPassingAnswer: passing && eligibleAnswerDollars !== null && eligibleJudgeDollars !== null ? (eligibleAnswerDollars + eligibleJudgeDollars) / passing : null,
     cacheHitRate: a.name === 'whole' && input ? usage.reduce((s, u) => s + (u.cache_read_input_tokens ?? 0), 0) / input : null,
     speeds,
   };
@@ -55,12 +60,13 @@ export function report(run: Run): string {
       ...Object.entries(s.categories).map(([k, v]) => `| ${k} | ${v.passing}/${v.eligible} | ${pct(v.passRate)} |`), '',
       `Leak failures: ${s.leakFailures.join(', ') || 'none'}.`, '',
       '| Cost / operation | Value |', '| --- | ---: |',
-      ...Object.entries({ answerDollars: s.answerDollars, judgeDollars: s.judgeDollars, totalDollars: s.totalDollars, dollarsPerPassingAnswer: s.dollarsPerPassingAnswer, embeddingDollars: a.embeddingDollars, cacheHitRate: pct(s.cacheHitRate), indexFreshness: a.indexFreshness }).map(([k, v]) => `| ${k} | ${cell(v)} |`), '',
+      ...Object.entries({ answerDollars: s.answerDollars, judgeDollars: s.judgeDollars, totalDollars: s.totalDollars, costIncomplete: s.costIncomplete, knownDollars: s.knownDollars, dollarsPerPassingAnswer: s.dollarsPerPassingAnswer, embeddingDollars: a.embeddingDollars, cacheHitRate: pct(s.cacheHitRate), indexFreshness: a.indexFreshness }).map(([k, v]) => `| ${k} | ${cell(v)} |`), '',
       '| Cache state | Questions | Mean first token ms | Mean total ms |', '| --- | ---: | ---: | ---: |',
       ...Object.entries(s.speeds).map(([k, v]) => `| ${k} | ${v.count} | ${cell(v.firstTokenMs)} | ${cell(v.totalMs)} |`), '',
+      ...(s.speeds.cold.count === 0 ? ['Every question hit a warm cache; no cold timing was measured.', ''] : []),
       '| Case | Input uncached | Cache write | Cache read | Output | Answer $ | Judge $ |', '| --- | ---: | ---: | ---: | ---: | ---: | ---: |');
     for (const r of a.cases) {
-      const u = r.answer?.usage;
+      const u = r.answer?.usage ?? r.answerUsage;
       lines.push(`| ${cell(r.case.id)} | ${cell(u?.input_tokens)} | ${cell(u?.cache_creation_input_tokens ?? (u ? 0 : null))} | ${cell(u?.cache_read_input_tokens ?? (u ? 0 : null))} | ${cell(u?.output_tokens)} | ${cell(r.answerDollars)} | ${cell(r.judgeDollars)} |`);
     }
     lines.push('', '### Failures and review', '');

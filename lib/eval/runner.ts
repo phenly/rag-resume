@@ -1,14 +1,14 @@
 import type { Corpus } from '../corpus';
 import type { Answer, Approach, ApproachResult, CaseResult, EvalCase, JudgeOutput, Usage } from './types';
 import { dollars } from './pricing';
-export type Judge = (c: EvalCase, answer: string) => Promise<{ output: JudgeOutput; usage: Usage }>;
+export type Judge = (c: EvalCase, answer: string) => Promise<{ output: JudgeOutput; usage: Usage; usageIncomplete?: boolean }>;
 export function checks(c: EvalCase, text: string) {
   return { mustSayMisses: c.mustSay.filter(p => !new RegExp(p, 'i').test(text)), mustNotSayHits: c.mustNotSay.filter(p => new RegExp(p, 'i').test(text)) };
 }
 export function grade(c: EvalCase, answer: Answer, judge?: JudgeOutput): Pick<CaseResult, 'status' | 'checks' | 'retrieval'> {
   const checked = checks(c, answer.text);
-  const leak = c.category === 'leak-probe' && (checked.mustNotSayHits.length > 0 || judge?.leaked);
-  const status = leak ? 'leak-failure' : !judge ? 'unjudged' : checked.mustSayMisses.length || checked.mustNotSayHits.length || !judge.rubricMet ? 'fail' : 'pass';
+  const leak = judge?.leaked || (c.category === 'leak-probe' && checked.mustNotSayHits.length > 0);
+  const status = leak ? 'leak-failure' : !judge ? 'unjudged' : checked.mustSayMisses.length || checked.mustNotSayHits.length || !judge.rubricMet || judge.unsupportedClaims.length ? 'fail' : 'pass';
   const ids = answer.retrievedChunkIds;
   const gold = new Set(c.goldChunks);
   const first = ids?.findIndex(id => gold.has(id)) ?? -1;
@@ -26,17 +26,27 @@ export async function runApproach(options: { approach?: Approach; corpus: Corpus
   const results: CaseResult[] = new Array(cases.length);
   async function run(index: number) {
     const c = cases[index];
-    const result: CaseResult = { case: c, status: 'answer-error' };
+    const result: CaseResult = { case: c, status: 'answer-error', judgeDollars: 0 };
     results[index] = result;
     try {
       result.answer = await approach!.answer(c.question);
       result.answerDollars = dollars(model, result.answer.usage);
+      result.answerCostIncomplete = !!result.answer.usageIncomplete;
       Object.assign(result, grade(c, result.answer));
-    } catch (e) { result.error = String(e); return; }
+    } catch (e) {
+      result.error = String(e);
+      const failure = e as { usage?: Usage; timings?: Answer['timings']; usageIncomplete?: boolean };
+      result.answerUsage = failure.usage;
+      result.answerTimings = failure.timings;
+      result.answerDollars = failure.usage ? dollars(model, failure.usage) : null;
+      result.answerCostIncomplete = !failure.usage || !!failure.usageIncomplete;
+      return;
+    }
     if (judge) {
       try {
         const judged = await judge(c, result.answer!.text);
         result.judgeUsage = judged.usage;
+        result.judgeCostIncomplete = !!judged.usageIncomplete;
         result.judgeDollars = dollars(judgeModel, judged.usage);
         result.judge = judged.output;
         Object.assign(result, grade(c, result.answer!, judged.output));
@@ -44,7 +54,9 @@ export async function runApproach(options: { approach?: Approach; corpus: Corpus
         // A known regex leak remains a leak even when judging fails.
         if (result.status !== 'leak-failure') result.status = 'judge-error';
         result.error = String(e);
-        const usage = (e as { usage?: Usage }).usage;
+        const { usage, usageIncomplete } = e as { usage?: Usage; usageIncomplete?: boolean };
+        result.judgeDollars = null;
+        result.judgeCostIncomplete = !usage || !!usageIncomplete;
         if (usage) { result.judgeUsage = usage; result.judgeDollars = dollars(judgeModel, usage); }
       }
     }

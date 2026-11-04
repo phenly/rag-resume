@@ -145,3 +145,96 @@ it('keeps SDK stream usage isolated when concurrent answers finish together', as
   const answers = await Promise.all(['one', 'two', 'three'].map(q => a.answer(q)));
   expect(answers.map(r => r.usage.input_tokens)).toEqual([1, 2, 3]);
 });
+
+it.each(['grounded', 'adversarial', 'leak-probe'] as const)('fails judge-detected leaks in %s cases', category => {
+  expect(grade({ ...c, category }, answer, { ...judge, leaked: true }).status).toBe('leak-failure');
+});
+it('fails conflicting judge fields when unsupported claims are present', () => {
+  expect(grade(c, answer, { ...judge, unsupportedClaims: ['Fictional fabricated claim'] }).status).toBe('fail');
+});
+it('passes positioning evidence and handling rules to the judge separately from source facts', async () => {
+  const cp = { ...await corpus(), positioningNotes: 'Withhold the fictional violet project. Fictional role: navigator.', globalRules: 'Do not quote internal notes.' };
+  const index = await chunkIndex(path.resolve('sample-corpus'), cp);
+  const create = vi.fn().mockResolvedValue({ stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify(judge) }], usage: answer.usage });
+  await createJudge(fakeClient({ messages: { create } }), 'claude-sonnet-5-5', index.text)(c, answer.text);
+  const system = create.mock.calls[0][0].system;
+  expect(system[1].text).toContain('# Source facts\n');
+  expect(system[1].text).toContain(`# Positioning notes and handling rules\n${cp.positioningNotes}`);
+  expect(system[1].text).toContain(`# Source rules\n${cp.globalRules}`);
+  expect(system[0].text).toContain('positioning notes');
+});
+it.each([408, 409, new Anthropic.APIConnectionError({}), new Anthropic.APIConnectionTimeoutError({})])('retries transient SDK failures up to three attempts: %s', async error => {
+  const failure = typeof error === 'number' ? { status: error } : error;
+  const call = vi.fn().mockRejectedValue(failure);
+  await expect(retry(call, vi.fn())).rejects.toBe(failure);
+  expect(call).toHaveBeenCalledTimes(3);
+});
+it('uses eligible answer and judge spend per pass and reports all-case operational spend separately', () => {
+  const rows = [
+    { case: c, status: 'pass' as const, answerDollars: 2, judgeDollars: 3 },
+    { case: { ...c, id: 'F' }, status: 'fail' as const, answerDollars: 4, judgeDollars: 5 },
+    { case: { ...c, id: 'O', status: 'open' as const }, status: 'pass' as const, answerDollars: 100, judgeDollars: 200 },
+    { case: { ...c, id: 'L', category: 'leak-probe' as const }, status: 'pass' as const, answerDollars: 300, judgeDollars: 400 },
+  ];
+  const approach = { name: 'whole', status: 'complete' as const, cases: rows, indexFreshness: null, embeddingDollars: 0 };
+  expect(summarize(approach)).toMatchObject({ dollarsPerPassingAnswer: 14, totalDollars: 1014 });
+  expect(summarize({ ...approach, cases: rows.slice(0, 2) }).dollarsPerPassingAnswer).toBe(14);
+});
+it('notes when every question was warm and no cold timing was measured', () => {
+  const warm = { ...answer, usage: { ...answer.usage, cache_creation_input_tokens: 0 } };
+  const run: Run = { version: 1, startedAt: '2026-11-03', answerModel: 'fictional', judgeModel: null, corpus: { version: 'fictional', chunkCount: 1 }, approaches: [{ name: 'whole', status: 'complete', cases: [{ case: c, status: 'unjudged', answer: warm }], indexFreshness: null, embeddingDollars: 0 }] };
+  expect(report(run)).toContain('Every question hit a warm cache; no cold timing was measured.');
+  run.approaches[0].cases[0].answer = answer;
+  expect(report(run)).not.toContain('Every question hit a warm cache');
+});
+
+const evalModels = { model: 'claude-opus-5-5', judgeModel: 'claude-sonnet-5-5' };
+const streamConfig = { apiKey: 'fictional', model: evalModels.model, effort: 'medium' as const, maxTokens: 1500 };
+it('retains max_tokens answer usage and timings instead of reporting zero spend', async () => {
+  const usage = { input_tokens: 100, output_tokens: 1500 };
+  const stream = () => ({
+    async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Fictional partial answer' } }; },
+    finalMessage: async () => ({ stop_reason: 'max_tokens', usage }), abort: vi.fn(),
+  });
+  const a = await runApproach({ approach: wholeApproach(streamConfig, fakeClient({ beta: { messages: { stream } } })), corpus: await corpus(), cases: [c], concurrency: 1, ...evalModels });
+  expect(a.cases[0]).toMatchObject({ status: 'answer-error', answerUsage: usage, answerTimings: { firstTokenMs: expect.any(Number), totalMs: expect.any(Number) }, answerDollars: dollars(evalModels.model, usage) });
+  expect(summarize(a)).toMatchObject({ totalDollars: dollars(evalModels.model, usage), costIncomplete: false });
+});
+it('marks unknown answer and judge spend incomplete while retaining known spend', async () => {
+  const options = { corpus: await corpus(), cases: [c], concurrency: 1, ...evalModels };
+  const failedAnswer = await runApproach({ ...options, approach: { name: 'whole', prepare: vi.fn(), answer: async () => { throw new Error('offline'); } } });
+  expect(summarize(failedAnswer)).toMatchObject({ totalDollars: null, costIncomplete: true, dollarsPerPassingAnswer: null });
+  const failedJudge = await runApproach({ ...options, approach: { name: 'whole', prepare: vi.fn(), answer: async () => answer }, judge: async () => { throw new Error('offline judge'); } });
+  expect(summarize(failedJudge)).toMatchObject({ totalDollars: null, costIncomplete: true, knownDollars: dollars(evalModels.model, answer.usage) });
+});
+it('accumulates partial streaming retry usage and flags unavailable final usage', async () => {
+  let attempt = 0;
+  const partial = { input_tokens: 10, output_tokens: 7, cache_read_input_tokens: 20 };
+  const stream = () => {
+    const first = attempt++ === 0;
+    return {
+      async *[Symbol.asyncIterator]() {
+        if (first) {
+          yield { type: 'message_start', message: { usage: { ...partial, output_tokens: 0 } } };
+          yield { type: 'message_delta', usage: { output_tokens: 7 } };
+          throw Object.assign(new Error('fictional overload'), { status: 503 });
+        }
+        yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hello' } };
+      },
+      finalMessage: async () => ({ stop_reason: 'end_turn', usage: answer.usage }), abort: vi.fn(),
+    };
+  };
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const a = await runApproach({ approach: wholeApproach(streamConfig, fakeClient({ beta: { messages: { stream } } })), corpus: await corpus(), cases: [c], concurrency: 1, ...evalModels });
+    expect(attempt).toBe(2);
+    expect(a.cases[0].answer?.usage).toEqual({ input_tokens: 110, output_tokens: 57, cache_creation_input_tokens: 200, cache_read_input_tokens: 320 });
+    expect(summarize(a)).toMatchObject({ totalDollars: null, costIncomplete: true, knownDollars: dollars(evalModels.model, { input_tokens: 110, output_tokens: 57, cache_creation_input_tokens: 200, cache_read_input_tokens: 320 }) });
+  } finally { log.mockRestore(); }
+});
+it('keeps judge retry usage and marks missing retry usage incomplete', async () => {
+  const create = vi.fn().mockRejectedValueOnce({ status: 503, usage: { input_tokens: 10, output_tokens: 2 } }).mockRejectedValueOnce({ status: 503 }).mockResolvedValue({ stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify(judge) }], usage: answer.usage });
+  const a = await runApproach({ approach: { name: 'whole', prepare: vi.fn(), answer: async () => answer }, corpus: await corpus(), cases: [c], concurrency: 1, ...evalModels, judge: createJudge(fakeClient({ messages: { create } }), evalModels.judgeModel, 'Fictional source') });
+  expect(a.cases[0].judgeUsage).toEqual({ input_tokens: 110, output_tokens: 52, cache_creation_input_tokens: 200, cache_read_input_tokens: 300 });
+  expect(summarize(a)).toMatchObject({ totalDollars: null, costIncomplete: true, dollarsPerPassingAnswer: null });
+});

@@ -8,7 +8,7 @@ export type EvalCase = {
 };
 export type Usage = { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null };
 export type Answer = {
-  text: string; usage: Usage; timings: { firstTokenMs: number | null; totalMs: number; stages?: Record<string, number> };
+  text: string; usage: Usage; usageIncomplete?: boolean; timings: { firstTokenMs: number | null; totalMs: number; stages?: Record<string, number> };
   retrievedChunkIds?: string[]; droppedByRerank?: string[];
 };
 export interface Approach {
@@ -21,6 +21,8 @@ export type CaseResult = {
   case: EvalCase; status: 'pass' | 'fail' | 'leak-failure' | 'judge-error' | 'answer-error' | 'unjudged';
   answer?: Answer; checks?: { mustSayMisses: string[]; mustNotSayHits: string[] };
   judge?: JudgeOutput; judgeUsage?: Usage; error?: string;
+  answerUsage?: Usage; answerTimings?: Answer['timings'];
+  answerCostIncomplete?: boolean; judgeCostIncomplete?: boolean;
   answerDollars?: number | null; judgeDollars?: number | null;
   retrieval?: { k: number; recallAtK: number | null; firstGoldRank: number | null; retrievedButUnused?: number; droppedByRerank?: string[] };
 };
