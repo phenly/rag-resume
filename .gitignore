@@ -47,3 +47,7 @@ next-env.d.ts
 node_modules/
 .next/
 /deploy-corpus/
+**/retrieval-index.json
+/.stage-*/
+/.stage-backup-*/
+**/.retrieval-index-*.tmp

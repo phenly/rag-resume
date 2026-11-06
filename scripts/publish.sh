@@ -28,7 +28,13 @@ report="$(npx tsx scripts/corpus-report.ts "${report_args[@]}")"
 printf '%s\n' "$report"
 local_version="${report%%$'\n'*}"
 local_version="${local_version#version }"
+npx tsx --env-file=.env.local scripts/build-retrieval-index.ts --corpus "$CORPUS"
 scripts/stage-deploy-corpus.sh "$CORPUS"
+expected_metadata="$(npx tsx scripts/retrieval-status.ts deploy-corpus)"
+source_metadata="$(npx tsx scripts/retrieval-status.ts "$CORPUS")"
+[[ "$source_metadata" == "$expected_metadata" ]] || { echo 'Corpus changed during preparation; rerun publish.sh' >&2; exit 1; }
+prepared_version="$(printf '%s' "$expected_metadata" | node -e 'console.log(JSON.parse(require("node:fs").readFileSync(0,"utf8")).version)')"
+[[ "$prepared_version" == "$local_version" ]] || { echo 'Corpus changed after change report; rerun publish.sh' >&2; exit 1; }
 
 if [[ "$no_deploy" == true ]]; then
   echo 'Staged. Not deployed (--no-deploy).'
@@ -42,16 +48,23 @@ trap 'exit 1' HUP INT TERM
 live_version=unreachable
 last_live_error=
 for ((attempt = 1; attempt <= 12; attempt++)); do
-  if live_version="$(scripts/live-version.sh 2>"$live_error_file")"; then
+  if live_metadata="$(scripts/live-version.sh --json 2>"$live_error_file")"; then
     last_live_error=
-    if [[ "$live_version" == "$local_version" ]]; then
-      npx tsx scripts/corpus-report.ts "$CORPUS" --write "$CORPUS/published.json"
-      # The write reloads the vault; a change since the report would leave published.json out of step with live.
-      written_version="$(node -e 'console.log(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).version)' "$CORPUS/published.json")"
-      if [[ "$written_version" != "$local_version" ]]; then
+    live_version=metadata-mismatch
+    if [[ "$live_metadata" == "$expected_metadata" ]]; then
+      # Do not replace the published receipt unless source and staged snapshots still agree.
+      current_metadata="$(npx tsx scripts/retrieval-status.ts "$CORPUS")"
+      [[ "$current_metadata" == "$expected_metadata" ]] || { echo 'Corpus changed during publish; rerun publish.sh' >&2; exit 1; }
+      receipt_file="$(mktemp "$CORPUS/.published.XXXXXX")"
+      npx tsx scripts/corpus-report.ts "$CORPUS" --write "$receipt_file"
+      written_version="$(node -e 'console.log(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).version)' "$receipt_file")"
+      current_metadata="$(npx tsx scripts/retrieval-status.ts "$CORPUS")"
+      if [[ "$written_version" != "$local_version" || "$current_metadata" != "$expected_metadata" ]]; then
+        rm -f "$receipt_file"
         echo 'Corpus changed during publish; rerun publish.sh' >&2
         exit 1
       fi
+      mv "$receipt_file" "$CORPUS/published.json"
       printf 'Live and current: %s\n' "$local_version"
       exit 0
     fi

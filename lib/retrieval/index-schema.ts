@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { RetrievalUnit } from './extract';
+import { TOKENIZER_VERSION, validateLexicalStatistics, type LexicalStatistics } from './lexical';
 
 export type EmbeddingConfig = {
   provider: string;
@@ -30,8 +31,9 @@ export type RetrievalIndex = {
   indexVersion: string;
   builtAt: string;
   extractorVersion: string;
-  /** Lexical statistics are a later layer; use "pending" until present. */
+  /** Legacy "pending" artifacts are accepted only as vector-reuse sources. */
   tokenizerVersion: string;
+  lexical?: LexicalStatistics;
   embedding: EmbeddingConfig;
   units: (RetrievalUnit & { vector: number[] })[];
   globalRules: string;
@@ -107,6 +109,8 @@ export function validateRetrievalIndex(value: unknown, expected?: IndexExpectati
     if (seen.has(unit.id)) fail('duplicate unit ID');
     seen.add(unit.id);
   }
+  if (value.tokenizerVersion === TOKENIZER_VERSION) validateLexicalStatistics(value.lexical, value.units as RetrievalIndex['units']);
+  else if (value.tokenizerVersion !== 'pending' || value.lexical !== undefined) fail('unsupported tokenizer version');
   const receipt = value.receipt;
   if (!object(receipt) || !count(receipt.sourceEntryCount) || !count(receipt.totalUnitCount)
     || !count(receipt.embeddedUnitCount) || !count(receipt.reusedUnitCount) || !count(receipt.providerTokens)

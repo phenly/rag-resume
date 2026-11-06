@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadCorpus } from "@/lib/corpus";
 import { corpusSnapshot, corpusVersion } from "@/lib/corpus-version";
 import { corpusFixture } from "./fixtures/corpus";
+import { retrievalCorpusFixture } from "./fixtures/retrieval-corpus";
+import { stageDeployCorpus } from "../scripts/stage-deploy-corpus";
 
 const sha = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 
@@ -62,13 +63,10 @@ describe("corpus version", () => {
   });
 
   it("corpus version is identical for vault and staged copies", async () => {
-    const f = await corpusFixture();
+    const f = await retrievalCorpusFixture();
     const vault = await loadCorpus(f.dir);
     const stagedDir = path.join(f.root, "staged output");
-    // Isolate the script's original default destination, even during the red run.
-    await f.put(f.root, "repo/scripts/stage-deploy-corpus.sh", await readFile("scripts/stage-deploy-corpus.sh"));
-    const script = path.join(f.root, "repo/scripts/stage-deploy-corpus.sh");
-    execFileSync("bash", [script, f.dir, stagedDir]);
+    await stageDeployCorpus(f.dir, stagedDir);
     const manifest = JSON.parse(await readFile(path.join(stagedDir, "corpus.json"), "utf8"));
     expect(manifest.documents).toEqual([{ title: "Overview", path: "doc-1.md" }]);
     expect(manifest.documentsFrom).toBe("bot-export.json");

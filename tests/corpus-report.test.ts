@@ -7,6 +7,8 @@ import { corpusSnapshot } from "@/lib/corpus-version";
 import { diffSnapshots, type Snapshot } from "@/scripts/corpus-report";
 import { corpusFixture } from "./fixtures/corpus";
 
+const metadata = (version = 'source-version', indexVersion = 'a'.repeat(64)) => ({ version, approach: 'whole', retrieval: { status: 'ready', corpusVersion: version, indexVersion, schemaVersion: 1, embeddingModel: 'voyage-4-large', dimensions: 1024 } });
+
 const snapshot = (changes: Partial<Snapshot> = {}): Snapshot => ({
   version: "version-one",
   files: { profile: "p", answerStyle: "a", positioningNotes: "n", globalRules: "r" },
@@ -153,6 +155,11 @@ fi
   await executable(bin, "npx", `#!/usr/bin/env bash
 set -eu
 printf '%s\\n' "$*" >> "$CALLS"
+if [[ " $* " == *' scripts/build-retrieval-index.ts '* ]]; then [[ "\${FAIL_AT:-}" != index ]]; exit; fi
+if [[ " $* " == *' scripts/retrieval-status.ts '* ]]; then
+  printf '%s\\n' "\${EXPECTED_METADATA}"
+  exit
+fi
 [[ -f "$3/keep.txt" && -f "$3/career/exported.txt" ]]
 echo 'version source-version'
 if [[ " $* " == *' --against '* ]]; then echo 'changed EX-1 — First project'; fi
@@ -195,7 +202,7 @@ printf '%b' "\${write_out//'%{http_code}'/\${HTTP_STATUS:-200}}"
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, VAULT: vault,
         TMPDIR: tmp, CALLS: calls, CURL_ARGS: curlArgs, CURL_STDIN: curlStdin,
         SITE_URL: "https://example.invalid",
-        LIVE_BODY: '{"version":"source-version"}', ...overrides },
+        LIVE_BODY: JSON.stringify(metadata()), EXPECTED_METADATA: JSON.stringify(metadata()), ...overrides },
     });
   return { ...f, repo, corpus, tmp, calls, curlArgs, curlStdin, executable, run };
 }
@@ -207,12 +214,15 @@ describe("publishing shell scripts (offline)", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("Staged. Not deployed (--no-deploy).");
     const calls = (await readFile(f.calls, "utf8")).trim().split("\n");
-    expect(calls).toHaveLength(4);
+    expect(calls).toHaveLength(7);
     expect(calls[0]).toContain("lint --source ");
     expect(calls[1]).toContain(`export-bot --source `);
     expect(calls[1]).toContain(`--out ${f.corpus}/career`);
     expect(calls[2]).toBe(`tsx scripts/corpus-report.ts ${f.corpus}`);
-    expect(calls[3]).toBe(`stage ${f.corpus}`);
+    expect(calls[3]).toBe(`tsx --env-file=.env.local scripts/build-retrieval-index.ts --corpus ${f.corpus}`);
+    expect(calls[4]).toBe(`stage ${f.corpus}`);
+    expect(calls[5]).toBe('tsx scripts/retrieval-status.ts deploy-corpus');
+    expect(calls[6]).toBe(`tsx scripts/retrieval-status.ts ${f.corpus}`);
     await expect(access(path.join(f.corpus, "published.json"))).rejects.toThrow();
   });
 
@@ -308,11 +318,29 @@ exit 1
 
   it("publish reports a reachable version mismatch without an empty diagnostic", async () => {
     const f = await shellFixture();
-    const result = f.run("publish.sh", [], { STUB_DEPLOY: "1", LIVE_BODY: '{"version":"old-version"}' });
+    const result = f.run("publish.sh", [], { STUB_DEPLOY: "1", LIVE_BODY: JSON.stringify(metadata('old-version')) });
     expect(result.status).toBe(1);
-    expect(result.stderr).toBe("Live version old-version does not match source-version\n");
+    expect(result.stderr).toBe("Live version metadata-mismatch does not match source-version\n");
     expect(await readFile(f.calls, "utf8")).not.toContain("--write");
     expect(await readdir(f.tmp)).toEqual([".keep"]);
+  });
+
+  it("publish refuses a corpus-only match with the wrong retrieval index", async () => {
+    const f = await shellFixture();
+    const result = f.run("publish.sh", [], { STUB_DEPLOY: "1", LIVE_BODY: JSON.stringify(metadata('source-version', 'b'.repeat(64))) });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('metadata-mismatch');
+    expect(await readFile(f.calls, 'utf8')).not.toContain('--write');
+    await expect(access(path.join(f.corpus, 'published.json'))).rejects.toThrow();
+  });
+
+  it("publish stops before staging when local index creation fails", async () => {
+    const f = await shellFixture();
+    const result = f.run("publish.sh", ["--no-deploy"], { FAIL_AT: 'index' });
+    expect(result.status).toBe(1);
+    const calls = await readFile(f.calls, 'utf8');
+    expect(calls).not.toContain('stage ');
+    expect(calls).not.toContain('vercel ');
   });
 
   it("live-version fails on transport errors, invalid responses, or missing invites", async () => {

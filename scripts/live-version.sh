@@ -4,8 +4,11 @@ set +x
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if [[ $# -ne 0 ]]; then
-  echo 'Usage: live-version.sh' >&2
+json=false
+if [[ $# -eq 1 && "$1" == --json ]]; then
+  json=true
+elif [[ $# -ne 0 ]]; then
+  echo 'Usage: live-version.sh [--json]' >&2
   exit 1
 fi
 if [[ ! -r .env.deploy ]]; then
@@ -40,9 +43,18 @@ try {
   const body = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
   if (!body || typeof body.version !== "string" || !/^[a-zA-Z0-9._-]+$/.test(body.version))
     throw new Error();
-  console.log(body.version);
+  if (process.argv[1] === "--json") {
+    const r = body.retrieval;
+    if (body.approach !== "whole" || !r || r.status !== "ready" || r.corpusVersion !== body.version ||
+      !/^[a-f0-9]{64}$/.test(r.indexVersion) || r.schemaVersion !== 1 ||
+      typeof r.embeddingModel !== "string" || !Number.isSafeInteger(r.dimensions) || r.dimensions <= 0) throw new Error();
+    console.log(JSON.stringify({ version: body.version, approach: body.approach, retrieval: {
+      status: r.status, corpusVersion: r.corpusVersion, indexVersion: r.indexVersion,
+      schemaVersion: r.schemaVersion, embeddingModel: r.embeddingModel, dimensions: r.dimensions
+    } }));
+  } else console.log(body.version);
 } catch {
   console.error("Invalid live version response");
   process.exitCode = 1;
 }
-'
+' -- "$(if [[ "$json" == true ]]; then printf %s --json; fi)"

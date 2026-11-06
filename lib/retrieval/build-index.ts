@@ -3,11 +3,11 @@ import { readFile, realpath, rename, unlink, open } from 'node:fs/promises';
 import path from 'node:path';
 import { VOYAGE_EMBEDDING_CONFIG } from './voyage';
 import type { Extraction } from './extract';
+import { buildLexicalStatistics, TOKENIZER_VERSION } from './lexical';
 import { embeddingConfigKey, sealRetrievalIndex, validateRetrievalIndex, type EmbeddingConfig, type RetrievalIndex } from './index-schema';
 
 export const EXTRACTOR_VERSION = '1';
-// Lexical statistics arrive with the search layer; this artifact is not runtime-ready.
-export const TOKENIZER_VERSION = 'pending';
+export { TOKENIZER_VERSION } from './lexical';
 export type DocumentEmbedder = {
   embed(texts: readonly string[], inputType: 'document', options?: { signal?: AbortSignal }): Promise<{ vectors: number[][]; inputTokens: number }>;
 };
@@ -28,7 +28,7 @@ export async function buildRetrievalIndex(options: {
   if (embeddingConfigKey(embedding) !== embeddingConfigKey(VOYAGE_EMBEDDING_CONFIG)) throw new Error('Index build: unsupported embedding configuration');
   signal?.throwIfAborted();
   const reusable = new Map<string, number[]>();
-  const warnings = ['Lexical statistics/search are not implemented; index is not ready for live retrieval.'];
+  const warnings: string[] = [];
   if (!embedding.revision) warnings.push('Hosted embedding model has no immutable revision; provider drift requires retrieval re-evaluation.');
   if (options.previous !== undefined) {
     // A corrupt or differently configured prior artifact is an error, never silently reused.
@@ -69,7 +69,7 @@ export async function buildRetrievalIndex(options: {
   const index = sealRetrievalIndex({
     schemaVersion: 1, corpusVersion: snapshot.corpusVersion, builtAt: new Date(started).toISOString(),
     extractorVersion: EXTRACTOR_VERSION, tokenizerVersion: TOKENIZER_VERSION, embedding,
-    units, globalRules: snapshot.extraction.globalRules,
+    units, lexical: buildLexicalStatistics(units), globalRules: snapshot.extraction.globalRules,
     receipt: { sourceEntryCount: snapshot.extraction.sourceEntryCount, totalUnitCount: units.length,
       embeddedUnitCount: missing.length, reusedUnitCount, providerTokens,
       // Provider rate snapshot is configured below, with no free-credit assumptions.

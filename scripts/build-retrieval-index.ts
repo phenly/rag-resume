@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { loadCorpus } from '../lib/corpus';
-import { extractRetrievalUnits, type ExportMetadata } from '../lib/retrieval/extract';
+import type { ExportMetadata } from '../lib/retrieval/extract';
+import { loadRetrievalSnapshot } from '../lib/retrieval/load';
 import { assertIndexOutputIsNotSource, buildRetrievalIndex, writeIndexAtomically } from '../lib/retrieval/build-index';
 import { createVoyageEmbedder, VOYAGE_EMBEDDING_CONFIG } from '../lib/retrieval/voyage';
 
@@ -26,9 +26,7 @@ async function main() {
       ...manifest.documents.map((item: { path: string }) => path.resolve(dir, item.path)),
       ...[metadata.rules, ...metadata.documents.map(item => item.path)].map(p => path.resolve(path.dirname(exportFile), p))];
     await assertIndexOutputIsNotSource(destination, sources);
-    const supplemental = manifest.documents.map((item: { title: string }) => ({ title: item.title, idPrefix: `supplemental-${createHash('sha256').update(item.title).digest('hex')}` }));
-    const extraction = extractRetrievalUnits(corpus, metadata, supplemental);
-    return { corpusVersion: corpus.version, extraction };
+    return loadRetrievalSnapshot(dir, corpus);
   };
   const before = await snapshot();
   let previous: unknown;
