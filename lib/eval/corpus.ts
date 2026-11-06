@@ -22,7 +22,7 @@ export async function chunkIndex(dir: string, corpus: Corpus): Promise<{ ids: st
   } else {
     ids = [...new Set(corpus.documents.flatMap(d => [...d.text.matchAll(/\[([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+)\]/g)].map(m => m[1])))];
   }
-  return { ids, text: '# Source facts\n' + metadata + corpus.documents.map(d => `# ${d.title}\n${d.text}`).join('\n\n') + `\n\n# Positioning notes and handling rules\n${corpus.positioningNotes}` + (corpus.globalRules ? `\n\n# Source rules\n${corpus.globalRules}` : '') };
+  return { ids, text: '# Source facts\n' + metadata + corpus.documents.map(d => `# ${d.title}\n${d.text}`).join('\n\n') + `\n\n# Positioning notes and handling rules\n${corpus.positioningNotes}` + (corpus.globalRules ? `\n\n# Source rules\n${corpus.globalRules}` : '') + `\n\n# Answer style and response behavior (guidance, not career facts)\n${corpus.answerStyle}` };
 }
 export async function countCorpus(client: Anthropic, model: string, corpus: Corpus) {
   const system = buildSystemPrompt(corpus);

@@ -23,8 +23,23 @@ describe("system prompt", () => {
     expect(redirect).toContain('answer only: "That\'s one to ask Pat Example directly."');
   });
 
+  it("keeps private-topic redirects bare and honors additional corpus boundaries", () => {
+    const rules = answerRules("Pat Example");
+    const redirect = rules.split("# Redirect list")[1].split("# Scope")[0];
+    expect(redirect).toContain("additional topics designated for redirect in the positioning notes");
+    expect(redirect).toContain("Do not append anecdotes, hints, speculation, colleague praise");
+    expect(redirect).not.toContain("Follow it with one friendly line");
+    expect(rules).not.toContain("A bare fact with no context is a failure");
+  });
+
   it("rules no longer mention the clean telling", () => {
     expect(answerRules("Pat Example")).not.toContain("clean telling");
+  });
+
+  it("separates application drafting from in-scope job-description discussion", () => {
+    const rules = answerRules("Pat Example");
+    expect(rules).toContain("Decline requests to draft cover letters");
+    expect(rules).toContain("Comparing a pasted job description with the career archive remains in scope");
   });
 
   it("rules put recorded personal background in scope", () => {

@@ -107,6 +107,13 @@ it('reads export chunk IDs and exposes their titles to the judge', async () => {
   await f.put(f.sourceDir, 'bot-export.json', JSON.stringify({ ...f.exported, chunks: { 'EX-TWO': { title: 'Company Two', hash: 'fictional' } } }));
   expect((await chunkIndex(f.dir, cp)).ids).toEqual(['EX-TWO']);
 });
+it('gives the judge response-style context separately from career facts', async () => {
+  const cp = await corpus();
+  cp.answerStyle = 'For weakness questions, use a playful joke before a documented lesson.';
+  const index = await chunkIndex(path.resolve('sample-corpus'), cp);
+  expect(index.text).toContain('# Answer style and response behavior (guidance, not career facts)\n' + cp.answerStyle);
+  expect(index.text.indexOf(cp.answerStyle)).toBeGreaterThan(index.text.indexOf('# Positioning notes and handling rules'));
+});
 it('whole adapter streams through the existing implementation with per-question usage', async () => {
   const stream = vi.fn(() => ({
     async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hello' } }; },
