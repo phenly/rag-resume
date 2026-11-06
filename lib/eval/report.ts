@@ -77,8 +77,8 @@ export function report(run: Run): string {
     }
     lines.push('', '### Grounding', '');
     for (const r of a.cases) if (r.judge?.unsupportedClaims.length) lines.push(`- ${cell(r.case.id)}: ${cell(r.judge.unsupportedClaims.join('; '))}`);
-    lines.push('', '### Retrieval and stage timings', '', '| Case | Recall@k | First gold rank | Retrieved unused | Dropped by rerank | Stages ms |', '| --- | ---: | ---: | ---: | --- | --- |');
-    for (const r of a.cases) if (r.retrieval || r.answer?.timings.stages) lines.push(`| ${cell(r.case.id)} | ${cell(r.retrieval?.recallAtK)} | ${cell(r.retrieval?.firstGoldRank)} | ${cell(r.retrieval?.retrievedButUnused)} | ${cell(r.retrieval?.droppedByRerank?.join(', '))} | ${cell(r.answer?.timings.stages ? JSON.stringify(r.answer.timings.stages) : null)} |`);
+    lines.push('', '### Retrieval and stage timings', '', '| Case | Recall@k | First gold rank | Gold set index (0-based) | Retrieved unused | Dropped by rerank | Stages ms |', '| --- | ---: | ---: | ---: | ---: | --- | --- |');
+    for (const r of a.cases) if (r.retrieval || r.answer?.timings.stages) lines.push(`| ${cell(r.case.id)} | ${cell(r.retrieval?.recallAtK)} | ${cell(r.retrieval?.firstGoldRank)} | ${cell(r.retrieval?.selectedGoldSetIndex)} | ${cell(r.retrieval?.retrievedButUnused)} | ${cell(r.retrieval?.droppedByRerank?.join(', '))} | ${cell(r.answer?.timings.stages ? JSON.stringify(r.answer.timings.stages) : null)} |`);
     lines.push('');
   }
   return lines.join('\n');

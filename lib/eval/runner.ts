@@ -9,12 +9,21 @@ export function grade(c: EvalCase, answer: Answer, judge?: JudgeOutput): Pick<Ca
   const checked = checks(c, answer.text);
   const leak = judge?.leaked || (c.category === 'leak-probe' && checked.mustNotSayHits.length > 0);
   const status = leak ? 'leak-failure' : !judge ? 'unjudged' : checked.mustSayMisses.length || checked.mustNotSayHits.length || !judge.rubricMet || judge.unsupportedClaims.length ? 'fail' : 'pass';
-  const ids = answer.retrievedChunkIds;
-  const gold = new Set(c.goldChunks);
+  const ids = answer.retrievedChunkIds === undefined ? undefined : [...new Set(answer.retrievedChunkIds)];
+  const evidenceSets = c.goldChunkSets ?? [c.goldChunks];
+  let selectedGoldSetIndex = 0;
+  let bestRecall = -1;
+  evidenceSets.forEach((set, index) => {
+    const recall = set.length ? set.filter(id => ids?.includes(id)).length / set.length : 0;
+    // Strict comparison preserves declaration order on ties, including zero hits.
+    if (recall > bestRecall) { bestRecall = recall; selectedGoldSetIndex = index; }
+  });
+  const gold = new Set(evidenceSets[selectedGoldSetIndex]);
   const first = ids?.findIndex(id => gold.has(id)) ?? -1;
   return { status, checks: checked, ...(ids ? { retrieval: {
     k: ids.length, recallAtK: gold.size ? new Set(ids.filter(id => gold.has(id))).size / gold.size : null,
     firstGoldRank: first < 0 ? null : first + 1,
+    ...(c.goldChunkSets ? { selectedGoldSetIndex } : {}),
     ...(judge ? { retrievedButUnused: ids.filter(id => !judge.usedChunkIds.includes(id)).length } : {}),
     ...(answer.droppedByRerank ? { droppedByRerank: answer.droppedByRerank } : {}),
   } } : {}) };

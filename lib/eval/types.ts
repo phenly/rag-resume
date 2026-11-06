@@ -4,7 +4,7 @@ export const categories = ['grounded', 'tricky', 'not-in-notes', 'redirect', 'de
 export type EvalCase = {
   id: string; category: typeof categories[number]; question: string;
   status: 'decided' | 'default' | 'open'; rubric: string;
-  mustSay: string[]; mustNotSay: string[]; goldChunks: string[]; source: string;
+  mustSay: string[]; mustNotSay: string[]; goldChunks: string[]; goldChunkSets?: string[][]; source: string;
 };
 export type Usage = { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null };
 export type Answer = {
@@ -24,6 +24,6 @@ export type CaseResult = {
   answerUsage?: Usage; answerTimings?: Answer['timings'];
   answerCostIncomplete?: boolean; judgeCostIncomplete?: boolean;
   answerDollars?: number | null; judgeDollars?: number | null;
-  retrieval?: { k: number; recallAtK: number | null; firstGoldRank: number | null; retrievedButUnused?: number; droppedByRerank?: string[] };
+  retrieval?: { k: number; recallAtK: number | null; firstGoldRank: number | null; selectedGoldSetIndex?: number; retrievedButUnused?: number; droppedByRerank?: string[] };
 };
 export type ApproachResult = { name: string; status: 'complete' | 'not built'; cases: CaseResult[]; indexFreshness: string | null; embeddingDollars: number | null };

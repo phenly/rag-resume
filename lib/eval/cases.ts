@@ -20,6 +20,14 @@ export function validateCases(value: unknown): { version: 1; cases: EvalCase[] }
     for (const key of ['mustSay', 'mustNotSay', 'goldChunks']) {
       if (!Array.isArray(c[key]) || !(c[key] as unknown[]).every(x => typeof x === 'string')) fail(`${c.id}: ${key} must be a string array`);
     }
+    if (c.goldChunkSets !== undefined) {
+      if (!Array.isArray(c.goldChunkSets) || c.goldChunkSets.length === 0) fail(`${c.id}: goldChunkSets must be a non-empty array of evidence sets`);
+      if ((c.goldChunks as string[]).length) fail(`${c.id}: goldChunks must be empty when goldChunkSets is supplied`);
+      (c.goldChunkSets as unknown[]).forEach((set, index) => {
+        if (!Array.isArray(set) || set.length === 0 || !set.every(id => typeof id === 'string' && id.trim() === id && id.length > 0)) fail(`${c.id}: goldChunkSets[${index}] must contain non-empty, trimmed chunk IDs`);
+        if (new Set(set as string[]).size !== (set as string[]).length) fail(`${c.id}: goldChunkSets[${index}] contains duplicate IDs`);
+      });
+    }
     for (const pattern of [...c.mustSay as string[], ...c.mustNotSay as string[]]) {
       try { new RegExp(pattern, 'i'); } catch { fail(`${c.id}: invalid regex ${pattern}`); }
     }

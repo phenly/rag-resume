@@ -42,7 +42,7 @@ async function main(args: string[]) {
   const corpus = await loadCorpus(dir);
   const index = await chunkIndex(dir, corpus);
   if (selected !== 'rag') {
-    for (const c of cases) for (const id of c.goldChunks) if (!index.ids.includes(id)) throw new Error(`${c.id}: gold chunk ${id} is absent from corpus chunk index`);
+    for (const c of cases) for (const id of c.goldChunkSets?.flat() ?? c.goldChunks) if (!index.ids.includes(id)) throw new Error(`${c.id}: gold chunk ${id} is absent from corpus chunk index`);
   }
   const run: Run = { version: 1, startedAt, answerModel: process.env.RAG_MODEL?.trim() || 'claude-opus-5-5', judgeModel: noJudge ? null : process.env.EVAL_JUDGE_MODEL?.trim() || 'claude-sonnet-5-5', corpus: { version: corpus.version, chunkCount: index.ids.length }, approaches: [] };
   if (selected !== 'rag') {

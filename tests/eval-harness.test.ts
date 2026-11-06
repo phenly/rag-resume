@@ -36,9 +36,36 @@ it('grades every regex case-insensitively and records patterns', () => {
   expect(grade(c, answer, { ...judge, rubricMet: false }).status).toBe('fail');
 });
 it('retrieval records recall, 1-based first gold rank, unused chunks and rerank drops', () => {
-  expect(grade(c, { ...answer, retrievedChunkIds: ['OTHER', 'EX-2', 'EX-2'], droppedByRerank: ['DROP'] }, judge).retrieval).toEqual({ k: 3, recallAtK: 0.5, firstGoldRank: 2, retrievedButUnused: 1, droppedByRerank: ['DROP'] });
+  expect(grade(c, { ...answer, retrievedChunkIds: ['OTHER', 'EX-2', 'EX-2'], droppedByRerank: ['DROP'] }, judge).retrieval).toEqual({ k: 2, recallAtK: 0.5, firstGoldRank: 2, retrievedButUnused: 1, droppedByRerank: ['DROP'] });
   expect(grade({ ...c, goldChunks: [] }, { ...answer, retrievedChunkIds: [] }).retrieval).toMatchObject({ recallAtK: null, firstGoldRank: null });
   expect(grade(c, answer, judge).retrieval).toBeUndefined();
+});
+describe('alternative retrieval evidence sets', () => {
+  const alternatives: EvalCase = { ...c, goldChunks: [], goldChunkSets: [['EX-1', 'EX-2'], ['ALT-1', 'ALT-2']] };
+  it('accepts alternatives without changing legacy schemas', () => {
+    expect(validateCases({ version: 1, cases: [alternatives] }).cases[0]).toEqual(alternatives);
+    expect(validateCases({ version: 1, cases: [c] }).cases[0]).toEqual(c);
+  });
+  it.each([null, [], ['EX-1'], [[]], [['']], [['   ']], [[' EX-1']], [['EX-1', 'EX-1']], [[1]]])('rejects malformed alternatives: %j', goldChunkSets => {
+    expect(() => validateCases({ version: 1, cases: [{ ...alternatives, goldChunkSets }] })).toThrow('goldChunkSets');
+  });
+  it('rejects ambiguous legacy gold with alternatives', () => {
+    expect(() => validateCases({ version: 1, cases: [{ ...c, goldChunkSets: [['ALT-1']] }] })).toThrow('goldChunks must be empty');
+  });
+  it('selects a complete alternate without requiring the union', () => {
+    expect(grade(alternatives, { ...answer, retrievedChunkIds: ['OTHER', 'ALT-1', 'ALT-2'] }).retrieval).toMatchObject({ k: 3, recallAtK: 1, firstGoldRank: 2, selectedGoldSetIndex: 1 });
+  });
+  it('keeps partial alternatives partial and selects the first declaration on ties', () => {
+    expect(grade(alternatives, { ...answer, retrievedChunkIds: ['ALT-1', 'EX-2'] }).retrieval).toMatchObject({ recallAtK: 0.5, firstGoldRank: 2, selectedGoldSetIndex: 0 });
+    expect(grade(alternatives, { ...answer, retrievedChunkIds: [] }).retrieval).toMatchObject({ recallAtK: 0, firstGoldRank: null, selectedGoldSetIndex: 0 });
+  });
+  it('deduplicates hits, ranks and unused counts while preserving the raw rerank trace', () => {
+    expect(grade(alternatives, { ...answer, retrievedChunkIds: ['OTHER', 'OTHER', 'ALT-1', 'ALT-1'], droppedByRerank: ['EX-2', 'ALT-2'] }, judge).retrieval).toEqual({ k: 2, recallAtK: 0.5, firstGoldRank: 2, selectedGoldSetIndex: 1, retrievedButUnused: 2, droppedByRerank: ['EX-2', 'ALT-2'] });
+  });
+  it('does not invent retrieval metrics for whole-corpus answers', () => {
+    expect(grade(alternatives, answer).retrieval).toBeUndefined();
+    expect(grade({ ...c, goldChunks: [] }, { ...answer, retrievedChunkIds: ['OTHER'] }).retrieval).toMatchObject({ recallAtK: null, firstGoldRank: null });
+  });
 });
 it('prices uncached, write, read and output separately', () => {
   expect(dollars('claude-opus-5-5', answer.usage)).toBeCloseTo((400 + 1600 + 60 + 1000) / 1e6);
