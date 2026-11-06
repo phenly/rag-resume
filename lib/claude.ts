@@ -23,7 +23,7 @@ export function readAskConfig(env: Record<string, string | undefined> = process.
     apiKey,
     model: env.RAG_MODEL?.trim() || "claude-opus-5-5",
     effort: effort && EFFORTS.includes(effort) ? effort : "medium",
-    maxTokens: Number.isSafeInteger(maxTokens) && maxTokens >= 256 ? maxTokens : 1500,
+    maxTokens: Number.isSafeInteger(maxTokens) && maxTokens >= 256 ? maxTokens : 2500,
   };
 }
 

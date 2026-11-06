@@ -172,14 +172,14 @@ describe("readAskConfig", () => {
       apiKey: "k",
       model: "claude-opus-5-5",
       effort: "medium",
-      maxTokens: 1500,
+      maxTokens: 2500,
     });
   });
 
   it.each([undefined, "", "nonnumeric", "255", "256.5", "Infinity", "900tokens", "9007199254740992"])(
-    "defaults maxTokens to 1500 for an unset or invalid value: %j",
+    "defaults maxTokens to 2500 for an unset or invalid value: %j",
     (maxTokens) => {
-      expect(readAskConfig({ ANTHROPIC_API_KEY: "k", RAG_MAX_TOKENS: maxTokens }).maxTokens).toBe(1500);
+      expect(readAskConfig({ ANTHROPIC_API_KEY: "k", RAG_MAX_TOKENS: maxTokens }).maxTokens).toBe(2500);
     },
   );
 
