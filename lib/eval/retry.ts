@@ -1,11 +1,19 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { Usage } from './types';
 
+/** Account spend quota is an operator action, never transient rate limiting. */
+export function isAccountQuotaError(error: unknown): boolean {
+  const value = error as { status?: unknown; message?: unknown } | null;
+  const message = typeof value?.message === 'string' ? value.message : String(error);
+  const status400 = value?.status === 400 || (value?.status === undefined && /^(?:Error:\s*)?400\b/.test(message));
+  return status400 && /reached your specified API usage limits/i.test(message);
+}
+
 export async function retry<T>(call: () => Promise<T>, pause: (ms: number) => Promise<void> = ms => new Promise(r => setTimeout(r, ms))): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try { return await call(); } catch (error) {
       const e = error as { status?: number; message?: string };
-      if (attempt >= 2 || !(error instanceof Anthropic.APIConnectionError || e.status === 408 || e.status === 409 || e.status === 429 || (e.status !== undefined && e.status >= 500) || /overloaded/i.test(e.message ?? ''))) throw error;
+      if (isAccountQuotaError(error) || attempt >= 2 || !(error instanceof Anthropic.APIConnectionError || e.status === 408 || e.status === 409 || e.status === 429 || (e.status !== undefined && e.status >= 500) || /overloaded/i.test(e.message ?? ''))) throw error;
       await pause(250 * 2 ** attempt);
     }
   }

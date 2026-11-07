@@ -29,7 +29,7 @@ export interface Approach {
 export type RetrievalMetrics = { k: number; recallAtK: number | null; firstGoldRank: number | null; selectedGoldSetIndex?: number };
 export type JudgeOutput = { contextGrounding?: 'assessed' | 'unavailable'; unsupportedInContextClaims?: string[]; rubricMet: boolean; reason: string; unsupportedClaims: string[]; leaked: boolean; usedChunkIds: string[] };
 export type CaseResult = {
-  case: EvalCase; status: 'pass' | 'fail' | 'leak-failure' | 'judge-error' | 'answer-error' | 'unjudged';
+  case: EvalCase; status: 'pass' | 'fail' | 'leak-failure' | 'judge-error' | 'answer-error' | 'unjudged' | 'skipped';
   comparisonEligible?: boolean;
   answer?: Answer; checks?: { mustSayMisses: string[]; mustNotSayHits: string[] };
   judge?: JudgeOutput; judgeUsage?: Usage; error?: string;
@@ -42,4 +42,4 @@ export type CaseResult = {
   retrievalStages?: Partial<Record<'dense' | 'lexical' | 'fused' | 'filtered' | 'reranked' | 'selected', RetrievalMetrics>>;
   retrieval?: { k: number; recallAtK: number | null; firstGoldRank: number | null; selectedGoldSetIndex?: number; retrievedButUnused?: number; droppedByRerank?: string[] };
 };
-export type ApproachResult = { name: string; status: 'complete' | 'not built'; cases: CaseResult[]; indexFreshness: string | null; embeddingDollars: number | null };
+export type ApproachResult = { name: string; status: 'complete' | 'not built' | 'incomplete'; incompleteReason?: string; cases: CaseResult[]; indexFreshness: string | null; embeddingDollars: number | null };

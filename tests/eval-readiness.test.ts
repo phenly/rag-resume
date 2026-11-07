@@ -77,3 +77,88 @@ it('caches the exact stable whole system without replacing selected-context evid
   expect(selected.system).toHaveLength(2);
   expect(JSON.parse(selected.messages[0].content).generationSystem).toBe('Exact selected entries');
 });
+it('stops queued retrieval after an account-quota judge failure and preserves in-flight answer costs', async () => {
+  const { summarize } = await import('../lib/eval/report');
+  const started: string[] = [];
+  const judged: string[] = [];
+  let announceInFlight!: () => void;
+  const inFlight = new Promise<void>(resolve => { announceInFlight = resolve; });
+  let finishInFlight!: () => void;
+  const finish = new Promise<void>(resolve => { finishInFlight = resolve; });
+  const cases = Array.from({ length: 7 }, (_, index) => ({ ...c, id: `Q${index}`, question: `Q${index}` }));
+  const result = await runApproach({ corpus: await loadCorpus('sample-corpus'), cases, concurrency: 2, model: 'claude-opus-5-5', judgeModel: 'claude-sonnet-5-5',
+    approach: { name: 'rag', prepare: async () => {}, answer: async question => {
+      started.push(question);
+      if (question === 'Q2') { announceInFlight(); await finish; }
+      return { ...answer, resolvedModel: 'claude-opus-5-5' };
+    } },
+    judge: async testcase => {
+      judged.push(testcase.id);
+      if (testcase.id === 'Q1') {
+        await inFlight;
+        setTimeout(finishInFlight, 0);
+        throw Object.assign(new Error('You have reached your specified API usage limits.'), { status: 400 });
+      }
+      return { output, usage: answer.usage };
+    } });
+  expect(started).toEqual(['Q0', 'Q1', 'Q2']);
+  expect(judged).toEqual(['Q0', 'Q1']);
+  expect(result).toMatchObject({ status: 'incomplete', incompleteReason: 'account-quota' });
+  expect(result.cases.map(row => row.status)).toEqual(['pass', 'judge-error', 'judge-error', 'skipped', 'skipped', 'skipped', 'skipped']);
+  expect(result.cases[1]).toMatchObject({ judgeDollars: null, judgeCostIncomplete: true });
+  expect(result.cases[2].answerDollars).toBeGreaterThan(0);
+  expect(result.cases[2].judgeDollars).toBe(0);
+  expect(result.cases[3]).toMatchObject({ answerDollars: 0, judgeDollars: 0, retrievalDollars: 0 });
+  expect(summarize(result)).toMatchObject({ comparisonValid: false, passRate: null, qualityComplete: false, costIncomplete: true });
+});
+it('halts on quota answer errors, never retries account quota, and does not confuse ordinary 400 errors', async () => {
+  const { isAccountQuotaError, retry } = await import('../lib/eval/retry');
+  const quota = Object.assign(new Error('400 You have reached your specified API usage limits. overloaded'), { status: 400 });
+  const call = vi.fn().mockRejectedValue(quota);
+  const pause = vi.fn();
+  await expect(retry(call, pause)).rejects.toBe(quota);
+  expect(call).toHaveBeenCalledTimes(1);
+  expect(pause).not.toHaveBeenCalled();
+  expect(isAccountQuotaError({ status: 429, message: quota.message })).toBe(false);
+  expect(isAccountQuotaError({ status: 400, message: 'Context length exceeded' })).toBe(false);
+  expect(isAccountQuotaError(new Error('400 You have reached your specified API usage limits.'))).toBe(true);
+  const respond = vi.fn().mockRejectedValue(quota);
+  const result = await runApproach({ corpus: await loadCorpus('sample-corpus'), cases: [c, { ...c, id: 'Q2' }], concurrency: 3, model: '', judgeModel: '', approach: { name: 'rag', prepare: async () => {}, answer: respond } });
+  expect(respond).toHaveBeenCalledTimes(1);
+  expect(result.cases.map(row => row.status)).toEqual(['answer-error', 'skipped']);
+  expect(result.status).toBe('incomplete');
+});
+it('does not judge count-unavailable placeholders or continue paid retrieval after generation becomes ineligible', async () => {
+  const { summarize } = await import('../lib/eval/report');
+  const respond = vi.fn().mockResolvedValue({ ...answer, effectiveApproach: 'deterministic', generationEligibility: { eligible: false, reason: 'count-unavailable' } });
+  const judge = vi.fn();
+  const result = await runApproach({ corpus: await loadCorpus('sample-corpus'), cases: [c, { ...c, id: 'Q2' }], concurrency: 2, model: '', judgeModel: '', approach: { name: 'rag', prepare: async () => {}, answer: respond }, judge });
+  expect(respond).toHaveBeenCalledTimes(1);
+  expect(judge).not.toHaveBeenCalled();
+  expect(result).toMatchObject({ status: 'incomplete', incompleteReason: 'generation-ineligible:count-unavailable' });
+  expect(summarize(result)).toMatchObject({ passRate: null, comparisonValid: false });
+});
+it('retains an in-flight regex leak when quota cancels its judge and excludes queued cases from fallback frequency', async () => {
+  const { summarize } = await import('../lib/eval/report');
+  let announce!: () => void;
+  const started = new Promise<void>(resolve => { announce = resolve; });
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const cases: EvalCase[] = [
+    { ...c, id: 'FIRST', question: 'FIRST' }, { ...c, id: 'QUOTA', question: 'QUOTA' },
+    { ...c, id: 'LEAK', question: 'LEAK', category: 'leak-probe', mustNotSay: ['synthetic result'] },
+    { ...c, id: 'QUEUED', question: 'QUEUED' },
+  ];
+  const result = await runApproach({ corpus: await loadCorpus('sample-corpus'), cases, concurrency: 2, model: 'claude-opus-5-5', judgeModel: 'claude-sonnet-5-5',
+    approach: { name: 'rag', prepare: async () => {}, answer: async question => {
+      if (question === 'LEAK') { announce(); await pending; }
+      return { ...answer, resolvedModel: 'claude-opus-5-5', retrievalTrace: { retrievalConfigVersion: 'fake', elapsedMs: 1, stages: {}, fallbackReason: 'selection-timeout' } };
+    } },
+    judge: async testcase => {
+      if (testcase.id === 'QUOTA') { await started; setTimeout(release, 0); throw Object.assign(new Error('You have reached your specified API usage limits.'), { status: 400 }); }
+      return { output, usage: answer.usage };
+    } });
+  expect(result.cases.map(row => row.status)).toEqual(['pass', 'judge-error', 'leak-failure', 'skipped']);
+  expect(result.cases[2].judge).toBeUndefined();
+  expect(summarize(result)).toMatchObject({ leakFailures: ['LEAK'], fallback: { count: 3, attempted: 3, frequency: 1 }, comparisonValid: false, passRate: null });
+});

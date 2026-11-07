@@ -3,7 +3,7 @@ import path from 'node:path';
 import { categories, type ApproachResult, type CaseResult } from './types';
 import type { countCorpus } from './corpus';
 export type Run = {
-  version: 1; promptTemplateVersion?: string; retrievalConfigVersion?: string; startedAt: string; answerModel: string; judgeModel: string | null;
+  version: 1; status?: 'complete' | 'incomplete'; stopReason?: string; promptTemplateVersion?: string; retrievalConfigVersion?: string; startedAt: string; answerModel: string; judgeModel: string | null;
   corpus: { version: string; chunkCount: number; tokens?: Awaited<ReturnType<typeof countCorpus>>; tokenError?: string };
   approaches: ApproachResult[];
 };
@@ -18,7 +18,8 @@ function latency(values: number[]) {
 export function summarize(a: ApproachResult) {
   const scored = a.cases.filter(eligible);
   const passing = scored.filter(r => r.status === 'pass').length;
-  const judged = scored.filter(r => !['unjudged'].includes(r.status));
+  const isJudged = (r: CaseResult) => !!r.answer && !!r.judge && ['pass', 'fail', 'leak-failure'].includes(r.status) && r.answer?.generationEligibility?.eligible !== false;
+  const qualityComplete = a.status === 'complete' && a.cases.length > 0 && a.cases.every(isJudged);
   const sumCost = (key: 'answerDollars' | 'judgeDollars', rows = a.cases) =>
     rows.some(r => r[key] == null || (key === 'answerDollars' ? r.answerCostIncomplete : r.judgeCostIncomplete)) ? null : rows.reduce((s, r) => s + r[key]!, 0);
   const answerDollars = sumCost('answerDollars');
@@ -34,26 +35,30 @@ export function summarize(a: ApproachResult) {
     return [kind, { count: answers.length, firstTokenMs: mean(answers.flatMap(a => a.timings.firstTokenMs === null ? [] : [a.timings.firstTokenMs])), totalMs: mean(answers.map(a => a.timings.totalMs)) }];
   }));
   const comparisonIneligible = a.cases.filter(r => r.answer && r.answer.effectiveApproach !== 'deterministic' && r.comparisonEligible !== true).map(r => r.case.id);
+  const retrievalAttempts = a.name === 'rag' ? a.cases.filter(r => r.status !== 'skipped').length : 0;
   const fallbackCount = a.name === 'rag' ? a.cases.filter(r => (r.answer?.retrievalTrace ?? r.retrievalTrace)?.fallbackReason !== undefined).length : 0;
   return {
-    comparisonValid: comparisonIneligible.length === 0,
-    comparisonInvalidReason: comparisonIneligible.length ? 'Generated answer model receipts are missing, mixed or substituted; descriptive pass rates retain every eligible case.' : null,
+    comparisonValid: qualityComplete && comparisonIneligible.length === 0,
+    qualityComplete,
+    skippedCases: a.cases.filter(r => r.status === 'skipped').map(r => r.case.id),
+    incompleteReason: a.incompleteReason ?? (!qualityComplete ? 'Missing valid answers or complete judgments; no quality rate is available.' : null),
+    comparisonInvalidReason: !qualityComplete ? 'Answers or judgments are incomplete, unavailable or ineligible; this is not a valid quality comparison.' : comparisonIneligible.length ? 'Generated answer model receipts are missing, mixed or substituted; descriptive pass rates retain every eligible case.' : null,
     latencyByEffectiveApproach: Object.fromEntries(['rag', 'whole', 'deterministic'].map(kind => {
       const answers = a.cases.flatMap(r => r.answer?.effectiveApproach === kind ? [r.answer] : []);
       return [kind, { answers: answers.length,
         firstTokenMs: latency(answers.flatMap(answer => answer.timings.firstTokenMs === null ? [] : [answer.timings.firstTokenMs])),
         totalMs: latency(answers.map(answer => answer.timings.totalMs)) }];
     })),
-    fallback: { count: fallbackCount, attempted: a.name === 'rag' ? a.cases.length : 0, frequency: a.name === 'rag' && a.cases.length ? fallbackCount / a.cases.length : null,
+    fallback: { count: fallbackCount, attempted: retrievalAttempts, frequency: retrievalAttempts ? fallbackCount / retrievalAttempts : null,
       completedWholeAnswers: a.name === 'rag' ? a.cases.filter(r => r.answer?.effectiveApproach === 'whole').length : 0 },
     contextGrounding: { assessed: a.cases.filter(r => r.judge?.contextGrounding === 'assessed').length,
       unavailable: a.cases.filter(r => r.judge && r.judge.contextGrounding !== 'assessed').length,
       unjudged: a.cases.filter(r => !r.judge).length },
-    eligible: scored.length, passing, passRate: scored.length && judged.length === scored.length ? passing / scored.length : null,
+    eligible: scored.length, passing, passRate: scored.length && qualityComplete ? passing / scored.length : null,
     categories: Object.fromEntries(categories.map(category => {
       const rows = scored.filter(r => r.case.category === category);
       return [category, { eligible: rows.length, passing: rows.filter(r => r.status === 'pass').length,
-        passRate: rows.length && rows.every(r => r.status !== 'unjudged') ? rows.filter(r => r.status === 'pass').length / rows.length : null }];
+        passRate: rows.length && qualityComplete && rows.every(isJudged) ? rows.filter(r => r.status === 'pass').length / rows.length : null }];
     })),
     comparisonIneligible,
     contextGroundingUnavailable: a.cases.filter(r => r.judge && r.judge.contextGrounding !== 'assessed').map(r => r.case.id),
@@ -79,14 +84,16 @@ export function report(run: Run): string {
   const lines = [`# CV-AI evaluation — ${run.startedAt}`, '', `Corpus: ${run.corpus.version}; chunks: ${run.corpus.chunkCount}.`,
     `Answer model: ${run.answerModel}; judge: ${run.judgeModel ?? 'disabled'}.`,
     `Prompt template: ${run.promptTemplateVersion ?? run.corpus.tokens?.promptTemplateVersion ?? 'historical/unrecorded'}.`,
-    `Retrieval configuration: ${run.retrievalConfigVersion ?? 'historical/unrecorded'}.`, '',
+    `Retrieval configuration: ${run.retrievalConfigVersion ?? 'historical/unrecorded'}.`,
+    ...(run.status ? [`Run completion: ${run.status}${run.stopReason ? ` — ${run.stopReason}` : ''}.`] : []), '',
     `Exact prompt tokens: ${t ?? 'unavailable'} — ${pressure}.`, run.corpus.tokens?.note ?? (run.corpus.tokenError ? `Token counting error: ${run.corpus.tokenError}` : 'Token counting skipped: no built approach selected.'), '',
     '| Corpus part | API tokens |', '| --- | ---: |', ...Object.entries(run.corpus.tokens?.parts ?? {}).map(([k, v]) => `| ${k} | ${v} |`), ''];
   for (const a of run.approaches) {
     lines.push(`## ${a.name} — ${a.status}`, '');
     if (a.status === 'not built') { lines.push('This approach is not built; no questions were sent.', ''); continue; }
     const s = summarize(a);
-    lines.push(`Comparative model eligibility: **${s.comparisonValid ? 'VALID' : 'INVALID'}**. ${s.comparisonInvalidReason ?? 'All generated answer model receipts match the configured model.'}`, '', `Pass rate: **${pct(s.passRate)}** (${s.passing}/${s.eligible}; excludes open cases and all leak probes). Unjudged runs have no pass rate.`, '',
+    lines.push(`Comparative model eligibility: **${s.comparisonValid ? 'VALID' : 'INVALID'}**. ${s.comparisonInvalidReason ?? 'All generated answer model receipts match the configured model.'}`, '', `Pass rate: **${pct(s.passRate)}** (${s.passing}/${s.eligible}; excludes open cases and all leak probes). Incomplete or unjudged runs have no pass rate.`, '',
+      ...(s.incompleteReason ? [`Incomplete: ${s.incompleteReason}; skipped before starting: ${s.skippedCases.length}.`, ''] : []),
       '| Category | Pass / eligible | Rate |', '| --- | ---: | ---: |',
       ...Object.entries(s.categories).map(([k, v]) => `| ${k} | ${v.passing}/${v.eligible} | ${pct(v.passRate)} |`), '',
       `Comparison-ineligible model receipts (missing, mixed or substituted): ${s.comparisonIneligible.join(', ') || 'none'}.`,

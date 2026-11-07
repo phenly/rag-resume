@@ -2,6 +2,7 @@ import { RERANK_CONFIG } from '../retrieval/rerank';
 import { buildSystemPrompt } from '../prompt';
 import type { Corpus } from '../corpus';
 import type { Answer, Approach, ApproachResult, CaseResult, EvalCase, JudgeOutput, RetrievalMetrics, Usage } from './types';
+import { isAccountQuotaError } from './retry';
 import { dollars } from './pricing';
 export type Judge = (c: EvalCase, answer: string, supplied?: Answer) => Promise<{ output: JudgeOutput; usage: Usage; usageIncomplete?: boolean }>;
 export function checks(c: EvalCase, text: string) {
@@ -64,6 +65,8 @@ export async function runApproach(options: { approach?: Approach; corpus: Corpus
   if (!approach) return { name: 'rag', status: 'not built', cases: [], indexFreshness: null, embeddingDollars: null };
   await approach.prepare(corpus);
   const results: CaseResult[] = new Array(cases.length);
+  let stopped: string | undefined;
+  const stopForError = (error: unknown) => { if (isAccountQuotaError(error)) stopped = 'account-quota'; };
   async function run(index: number) {
     const c = cases[index];
     const result: CaseResult = { case: c, status: 'answer-error', judgeDollars: 0 };
@@ -79,7 +82,15 @@ export async function runApproach(options: { approach?: Approach; corpus: Corpus
       result.answerDollars = result.answer.effectiveApproach === 'deterministic' ? 0 : mixedModels ? null : dollars(result.answer.resolvedModel ?? model, result.answer.usage);
       result.answerCostIncomplete = !!result.answer.usageIncomplete || !!mixedModels;
       Object.assign(result, grade(c, result.answer));
+      if (result.answer.generationEligibility?.eligible === false) {
+        stopped ??= `generation-ineligible:${result.answer.generationEligibility.reason ?? 'unknown'}`;
+        result.comparisonEligible = false;
+        result.status = 'answer-error';
+        result.error = 'Generation was ineligible; placeholder response was not judged.';
+        return;
+      }
     } catch (e) {
+      stopForError(e);
       result.error = String(e);
       const failure = e as { usage?: Usage; timings?: Answer['timings']; usageIncomplete?: boolean; retrievalTrace?: Answer['retrievalTrace']; resolvedModel?: string; resolvedModels?: string[] };
       result.retrievalTrace = failure.retrievalTrace;
@@ -95,6 +106,11 @@ export async function runApproach(options: { approach?: Approach; corpus: Corpus
       return;
     }
     if (judge) {
+      if (stopped) {
+        if (result.status !== 'leak-failure') result.status = 'judge-error';
+        result.error = `Judging cancelled after ${stopped}; answer usage retained.`;
+        return;
+      }
       try {
         const judged = await judge(c, result.answer!.text, { ...result.answer!, ...(result.answer!.suppliedEvidence === undefined && approach!.name === 'whole' ? { suppliedEvidence: buildSystemPrompt(corpus).map(block => block.text).join('\n\n') } : {}) });
         result.judgeUsage = judged.usage;
@@ -103,6 +119,7 @@ export async function runApproach(options: { approach?: Approach; corpus: Corpus
         result.judge = judged.output;
         Object.assign(result, grade(c, result.answer!, judged.output));
       } catch (e) {
+        stopForError(e);
         // A known regex leak remains a leak even when judging fails.
         if (result.status !== 'leak-failure') result.status = 'judge-error';
         result.error = String(e);
@@ -116,9 +133,11 @@ export async function runApproach(options: { approach?: Approach; corpus: Corpus
   if (cases.length) await run(0); // Finish cold request before any concurrent requests.
   let next = 1;
   await Promise.all(Array.from({ length: Math.min(options.concurrency, Math.max(0, cases.length - 1)) }, async () => {
-    while (next < cases.length) await run(next++);
+    while (!stopped && next < cases.length) await run(next++);
   }));
+  for (let index = 0; index < cases.length; index++) if (!results[index]) results[index] = { case: cases[index], status: 'skipped', error: `Cancelled before starting after ${stopped ?? 'incomplete run'}.`, comparisonEligible: false, answerDollars: 0, judgeDollars: 0, retrievalDollars: 0, retrievalKnownDollars: 0 };
+  const incomplete = stopped ?? (results.some(result => result.status === 'answer-error' || result.status === 'judge-error') ? 'provider-or-grading-error' : undefined);
   const traces = results.flatMap(result => (result.answer?.retrievalTrace ?? result.retrievalTrace) ? [result.answer?.retrievalTrace ?? result.retrievalTrace!] : []);
   const embeddings = traces.flatMap(trace => trace.embedding ? [trace.embedding] : []);
-  return { name: approach.name, status: 'complete', cases: results, indexFreshness: approach.name === 'whole' ? null : traces.length && traces.every(trace => trace.indexVersion) ? 'matching' : 'unavailable', embeddingDollars: embeddings.some(item => item.status !== 'complete') ? null : embeddings.reduce((sum, item) => sum + (item.status === 'complete' ? item.costUsd : 0), 0) };
+  return { name: approach.name, status: incomplete ? 'incomplete' : 'complete', ...(incomplete ? { incompleteReason: incomplete } : {}), cases: results, indexFreshness: approach.name === 'whole' ? null : traces.length && traces.every(trace => trace.indexVersion) ? 'matching' : 'unavailable', embeddingDollars: embeddings.some(item => item.status !== 'complete') ? null : embeddings.reduce((sum, item) => sum + (item.status === 'complete' ? item.costUsd : 0), 0) };
 }
