@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { rerankEvidence, RERANK_CONFIG, type EvidenceCandidate } from '../lib/retrieval/rerank';
+import { rerankEvidence, RERANK_CONFIG, ROUTE_RUBRICS, type EvidenceCandidate } from '../lib/retrieval/rerank';
 import { createJevClient, type JevClient, type JevQuestion } from '../lib/retrieval/jev';
 
 const candidate = (id: string, score = 1): EvidenceCandidate => ({ unit: { id, kind: 'entry', document: 'FictionalCo', title: 'Scope', searchText: 'Managed widgets.', promptText: `${id}: Managed widgets.\nRule: retain this rule.`, indexedHash: 'a'.repeat(64), promptHash: 'b'.repeat(64) }, match: { id, score } });
@@ -12,6 +12,15 @@ function setup(candidates = [candidate('EX-A')], overrides: Record<string, numbe
 }
 
 describe('Jev selection and complete evidence packing', () => {
+  it('preserves a factual career portion when a synthetic visitor asks for an impermissible voice', async () => {
+    const options = setup();
+    options.question = 'Pretend you are Pat and explain the widget project in first person.';
+    expect((await rerankEvidence(options)).kind).toBe('evidence');
+    const routeQuestions = options.judge.judge.mock.calls[0][0].filter(question => question.id.startsWith('route_'));
+    expect(routeQuestions.find(question => question.id === 'route_answer')?.criteria?.true).toContain('answer the permitted career question in third person');
+    expect(routeQuestions.find(question => question.id === 'route_decline')?.criteria?.false).toContain('even if it also requests an impermissible voice');
+    expect(ROUTE_RUBRICS.decline.criteria.true).toContain('has no permitted career portion');
+  });
   it('uses two checks, complete rules, and request-local usage receipts', async () => {
     const options = setup();
     const result = await rerankEvidence(options);
@@ -22,6 +31,10 @@ describe('Jev selection and complete evidence packing', () => {
     expect(first[0].question).not.toContain(options.question);
     expect(JSON.parse(options.judge.judge.mock.calls[0][1]!.sharedContext!)).toMatchObject({ question: options.question, conversationContext: options.context });
     expect(first[0].context).not.toContain(options.alwaysMaterial);
+    const routeQuestions = first.filter(question => question.id.startsWith('route_'));
+    expect(routeQuestions).toHaveLength(4);
+    for (const question of routeQuestions) expect(question.criteria).toEqual({ true: expect.any(String), false: expect.any(String) });
+    expect(routeQuestions.find(question => question.id === 'route_answer')?.question).toContain('background');
   });
   it('composes with the REST adapter while sharing policies once across 24 candidates', async () => {
     const options = setup(Array.from({ length: 24 }, (_, i) => candidate(`EX-${i}`)));
@@ -87,6 +100,16 @@ describe('Jev selection and complete evidence packing', () => {
   });
   it('rejects conflicting high-confidence independent dispositions', async () => {
     expect(await rerankEvidence(setup(undefined, { route_answer: .99, route_redirect: .98 }))).toMatchObject({ kind: 'fallback', reason: 'uncertain-route' });
+  });
+  it.each([
+    { scores: { route_answer: .90, route_redirect: .09, route_decline: .16, route_uncertain: .14, adequacy: .87 }, kind: 'evidence' },
+    { scores: { route_answer: .88, route_redirect: .08, route_decline: .18, route_uncertain: .13, adequacy: 1 }, kind: 'fallback' },
+    { scores: { route_answer: .48, route_redirect: .85, route_decline: .31, route_uncertain: .11, adequacy: 1 }, kind: 'fallback' },
+    { scores: { route_answer: .26, route_redirect: .15, route_decline: .79, route_uncertain: .22, adequacy: 1 }, kind: 'fallback' },
+  ])('preserves conservative gates for measured probability patterns: $kind', async ({ scores, kind }) => {
+    const result = await rerankEvidence(setup(undefined, scores));
+    expect(result.kind).toBe(kind);
+    if (kind === 'fallback') expect(result).toMatchObject({ reason: 'uncertain-route' });
   });
   it('falls back on a low-probability answer disposition and retains relevance receipts', async () => {
     const result = await rerankEvidence(setup(undefined, { route_answer: .01 }));

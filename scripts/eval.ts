@@ -1,4 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { readAskConfig } from '../lib/claude';
 import { loadCorpus, resolveCorpusDir } from '../lib/corpus';
 import { readCases } from '../lib/eval/cases';
@@ -6,10 +10,14 @@ import { chunkIndex, countCorpus } from '../lib/eval/corpus';
 import { createJudge } from '../lib/eval/judge';
 import { runApproach } from '../lib/eval/runner';
 import { writeRun, type Run } from '../lib/eval/report';
+import { withEvalSnapshot } from '../lib/eval/snapshot';
 import { ragApproach } from '../lib/eval/rag';
 import { wholeApproach } from '../lib/eval/whole';
 import { RETRIEVAL_CONFIG_VERSION } from '../lib/retrieval/pipeline';
 import { PROMPT_TEMPLATE_VERSION } from '../lib/prompt';
+import { MODEL_PRICES } from '../lib/eval/pricing';
+import { JEV_INPUT_USD_PER_MILLION } from '../lib/retrieval/jev';
+import { RETRIEVAL_PIPELINE_CONFIG } from '../lib/retrieval/pipeline';
 
 const help = `Usage: npm run eval -- --cases <path> --out <dir> [options]
   --approach whole|rag|both  Default: whole; rag requires retrieval provider keys and a context limit
@@ -41,23 +49,60 @@ async function main(args: string[]) {
     cases = cases.filter(c => ids.includes(c.id));
   }
   const startedAt = new Date().toISOString();
-  const dir = resolveCorpusDir();
-  const corpus = await loadCorpus(dir);
-  const index = await chunkIndex(dir, corpus);
-  for (const c of cases) for (const id of c.goldChunkSets?.flat() ?? c.goldChunks) if (!index.ids.includes(id)) throw new Error(`${c.id}: gold chunk ${id} is absent from corpus chunk index`);
-  const run: Run = { version: 1, retrievalConfigVersion: RETRIEVAL_CONFIG_VERSION, promptTemplateVersion: PROMPT_TEMPLATE_VERSION, startedAt, answerModel: process.env.RAG_MODEL?.trim() || 'claude-opus-5-5', judgeModel: noJudge ? null : process.env.EVAL_JUDGE_MODEL?.trim() || 'claude-sonnet-5-5', corpus: { version: corpus.version, chunkCount: index.ids.length }, approaches: [] };
-  if (selected !== 'rag') {
-    const config = readAskConfig();
-    const client = new Anthropic({ apiKey: config.apiKey, maxRetries: 0 });
-    try { run.corpus.tokens = await countCorpus(client, config.model, corpus); }
-    catch (e) { run.corpus.tokenError = String(e); }
-    run.approaches.push(await runApproach({ approach: wholeApproach(config, client), corpus, cases, concurrency, model: config.model, judgeModel: run.judgeModel ?? '', judge: noJudge ? undefined : createJudge(client, run.judgeModel!, index.text) }));
-  }
-  if (selected !== 'whole') {
-    const config = readAskConfig();
-    const client = new Anthropic({ apiKey: config.apiKey, maxRetries: 0 });
-    run.approaches.push(await runApproach({ approach: ragApproach(config, { corpusDir: dir, client }), corpus, cases, concurrency, model: config.model, judgeModel: run.judgeModel ?? '', judge: noJudge ? undefined : createJudge(client, run.judgeModel!, index.text) }));
-  }
-  console.log(`Results: ${await writeRun(options['--out'], run)}`);
+  const sourceDir = resolveCorpusDir();
+  const evaluate = async (dir: string) => {
+    const corpus = await loadCorpus(dir);
+    const indexSnapshot = selected === 'whole' ? undefined : await readFile(path.join(dir, 'retrieval-index.json'), 'utf8');
+    const configReceipt = readAskConfig();
+    const receipt = {
+      codeRevision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+      workingTreeDirty: !!execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim(),
+      workingDiffSha256: createHash('sha256').update(execFileSync('git', ['diff', 'HEAD'], { maxBuffer: 16 * 1024 * 1024 })).digest('hex'),
+      caseSetSha256: createHash('sha256').update(JSON.stringify(cases)).digest('hex'),
+      retrievalIndexSha256: indexSnapshot ? createHash('sha256').update(indexSnapshot).digest('hex') : null,
+      generator: { model: configReceipt.model, effort: configReceipt.effort, maxTokens: configReceipt.maxTokens,
+        contextTokens: process.env.RAG_GENERATOR_CONTEXT_TOKENS ?? null },
+      gradingVersion: 'context-grounding-stage-recall-1',
+    };
+    const index = await chunkIndex(dir, corpus);
+    for (const c of cases) for (const id of c.goldChunkSets?.flat() ?? c.goldChunks) if (!index.ids.includes(id)) throw new Error(`${c.id}: gold chunk ${id} is absent from corpus chunk index`);
+    const run: Run = { version: 1, retrievalConfigVersion: RETRIEVAL_CONFIG_VERSION, promptTemplateVersion: PROMPT_TEMPLATE_VERSION, startedAt, answerModel: configReceipt.model, judgeModel: noJudge ? null : process.env.EVAL_JUDGE_MODEL?.trim() || 'claude-sonnet-5-5', corpus: { version: corpus.version, chunkCount: index.ids.length }, approaches: [] };
+    const frozenFiles: Record<string, string> = {
+      'receipt.json': JSON.stringify(receipt, null, 2) + '\n',
+      'cases.json': JSON.stringify({ version: 1, cases }, null, 2) + '\n',
+      'corpus-snapshot.json': JSON.stringify(corpus, null, 2) + '\n',
+      'pricing.json': JSON.stringify({ generatorAndJudge: MODEL_PRICES,
+        jevInputUsdPerMillion: JEV_INPUT_USD_PER_MILLION,
+        voyageInputUsdPerMillion: RETRIEVAL_PIPELINE_CONFIG.embeddingUsdPerMillionTokens }, null, 2) + '\n',
+      ...(indexSnapshot ? { 'retrieval-index.json': indexSnapshot } : {}),
+    };
+    // A killed process leaves a recoverable ignored snapshot and these frozen inputs.
+    if (selected !== 'whole') for (const [name, text] of Object.entries(frozenFiles)) {
+      await writeFile(path.join(path.dirname(dir), name), text, { mode: 0o600 });
+    }
+    try {
+      if (selected !== 'rag') {
+        const config = configReceipt;
+        const client = new Anthropic({ apiKey: config.apiKey, maxRetries: 0 });
+        try { run.corpus.tokens = await countCorpus(client, config.model, corpus); }
+        catch (e) { run.corpus.tokenError = String(e); }
+        run.approaches.push(await runApproach({ approach: wholeApproach(config, client), corpus, cases, concurrency, model: config.model, judgeModel: run.judgeModel ?? '', judge: noJudge ? undefined : createJudge(client, run.judgeModel!, index.text) }));
+      }
+      if (selected !== 'whole') {
+        const config = configReceipt;
+        const client = new Anthropic({ apiKey: config.apiKey, maxRetries: 0 });
+        run.approaches.push(await runApproach({ approach: ragApproach(config, { corpusDir: dir, client }), corpus, cases, concurrency, model: config.model, judgeModel: run.judgeModel ?? '', judge: noJudge ? undefined : createJudge(client, run.judgeModel!, index.text) }));
+      }
+    } catch (error) {
+      frozenFiles['run-error.json'] = JSON.stringify({ error: String(error), failedAt: new Date().toISOString() }, null, 2) + '\n';
+      throw error;
+    } finally {
+      const destination = await writeRun(options['--out'], run);
+      for (const [name, text] of Object.entries(frozenFiles)) await writeFile(path.join(destination, name), text, { mode: 0o600 });
+      console.log(`Results: ${destination}`);
+    }
+  };
+  if (selected === 'whole') await evaluate(sourceDir);
+  else await withEvalSnapshot(sourceDir, evaluate);
 }
 main(process.argv.slice(2)).catch(error => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });

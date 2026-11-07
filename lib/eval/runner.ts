@@ -1,32 +1,55 @@
+import { RERANK_CONFIG } from '../retrieval/rerank';
+import { buildSystemPrompt } from '../prompt';
 import type { Corpus } from '../corpus';
-import type { Answer, Approach, ApproachResult, CaseResult, EvalCase, JudgeOutput, Usage } from './types';
+import type { Answer, Approach, ApproachResult, CaseResult, EvalCase, JudgeOutput, RetrievalMetrics, Usage } from './types';
 import { dollars } from './pricing';
-export type Judge = (c: EvalCase, answer: string) => Promise<{ output: JudgeOutput; usage: Usage; usageIncomplete?: boolean }>;
+export type Judge = (c: EvalCase, answer: string, supplied?: Answer) => Promise<{ output: JudgeOutput; usage: Usage; usageIncomplete?: boolean }>;
 export function checks(c: EvalCase, text: string) {
   return { mustSayMisses: c.mustSay.filter(p => !new RegExp(p, 'i').test(text)), mustNotSayHits: c.mustNotSay.filter(p => new RegExp(p, 'i').test(text)) };
 }
-export function grade(c: EvalCase, answer: Answer, judge?: JudgeOutput): Pick<CaseResult, 'status' | 'checks' | 'retrieval'> {
-  const checked = checks(c, answer.text);
-  const leak = judge?.leaked || (c.category === 'leak-probe' && checked.mustNotSayHits.length > 0);
-  const status = leak ? 'leak-failure' : !judge ? 'unjudged' : checked.mustSayMisses.length || checked.mustNotSayHits.length || !judge.rubricMet || judge.unsupportedClaims.length ? 'fail' : 'pass';
-  const ids = answer.retrievedChunkIds === undefined ? undefined : [...new Set(answer.retrievedChunkIds)];
-  const evidenceSets = c.goldChunkSets ?? [c.goldChunks];
+/** Each stage chooses its best complete evidence option, preserving declared ties. */
+export function retrievalMetrics(c: EvalCase, retrievedIds: readonly string[]): RetrievalMetrics {
+  const ids = [...new Set(retrievedIds)];
+  const sets = c.goldChunkSets ?? [c.goldChunks];
   let selectedGoldSetIndex = 0;
   let bestRecall = -1;
-  evidenceSets.forEach((set, index) => {
-    const recall = set.length ? set.filter(id => ids?.includes(id)).length / set.length : 0;
-    // Strict comparison preserves declaration order on ties, including zero hits.
+  sets.forEach((set, index) => {
+    const recall = set.length ? set.filter(id => ids.includes(id)).length / set.length : 0;
     if (recall > bestRecall) { bestRecall = recall; selectedGoldSetIndex = index; }
   });
-  const gold = new Set(evidenceSets[selectedGoldSetIndex]);
-  const first = ids?.findIndex(id => gold.has(id)) ?? -1;
-  return { status, checks: checked, ...(ids ? { retrieval: {
-    k: ids.length, recallAtK: gold.size ? new Set(ids.filter(id => gold.has(id))).size / gold.size : null,
-    firstGoldRank: first < 0 ? null : first + 1,
-    ...(c.goldChunkSets ? { selectedGoldSetIndex } : {}),
-    ...(judge ? { retrievedButUnused: ids.filter(id => !judge.usedChunkIds.includes(id)).length } : {}),
-    ...(answer.droppedByRerank ? { droppedByRerank: answer.droppedByRerank } : {}),
-  } } : {}) };
+  const gold = new Set(sets[selectedGoldSetIndex]);
+  const first = ids.findIndex(id => gold.has(id));
+  return { k: ids.length, recallAtK: gold.size ? ids.filter(id => gold.has(id)).length / gold.size : null,
+    firstGoldRank: first < 0 ? null : first + 1, ...(c.goldChunkSets ? { selectedGoldSetIndex } : {}) };
+}
+export function grade(c: EvalCase, answer: Answer, judge?: JudgeOutput): Pick<CaseResult, 'status' | 'checks' | 'retrieval' | 'retrievalStages' | 'retrievalLosses'> {
+  const checked = checks(c, answer.text);
+  const leak = judge?.leaked || (c.category === 'leak-probe' && checked.mustNotSayHits.length > 0);
+  const status = leak ? 'leak-failure' : !judge ? 'unjudged' : checked.mustSayMisses.length || checked.mustNotSayHits.length || !judge.rubricMet || judge.unsupportedClaims.length || judge.unsupportedInContextClaims?.length ? 'fail' : 'pass';
+  const ids = answer.retrievedChunkIds === undefined ? undefined : [...new Set(answer.retrievedChunkIds)];
+  const trace = answer.retrievalTrace;
+  const retrievalStages: NonNullable<CaseResult['retrievalStages']> = {};
+  if (trace?.search) for (const stage of ['dense', 'lexical', 'fused'] as const) {
+    retrievalStages[stage] = retrievalMetrics(c, trace.search[stage].map(item => item.id));
+  }
+  if (trace?.rerank?.relevance.length) {
+    const fused = new Map(trace.search?.fused.map(item => [item.id, item.score]) ?? []);
+    const ranked = [...trace.rerank.relevance].sort((a, b) => b.probability - a.probability || (fused.get(b.id) ?? 0) - (fused.get(a.id) ?? 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const filtered = ranked.filter(item => item.probability >= RERANK_CONFIG.relevance);
+    retrievalStages.filtered = retrievalMetrics(c, filtered.map(item => item.id));
+    retrievalStages.reranked = retrievalMetrics(c, filtered.slice(0, RERANK_CONFIG.maxUnits).map(item => item.id));
+  }
+  // Packing may have completed before adequacy failed; distinguish it from
+  // retrievedChunkIds, which records evidence actually supplied to generation.
+  if (trace?.rerank?.decisions.length) retrievalStages.selected = retrievalMetrics(c, trace.rerank.decisions.filter(item => item.reason === 'selected').map(item => item.id));
+  const retrievalLosses = trace?.rerank?.decisions.length ? Object.fromEntries((['relevance', 'top-eight', 'token-budget'] as const).map(reason => [reason, trace.rerank!.decisions.filter(item => item.reason === reason).map(item => item.id)])) : undefined;
+  return { status, checks: checked,
+    ...(retrievalLosses ? { retrievalLosses } : {}),
+    ...(Object.keys(retrievalStages).length ? { retrievalStages } : {}),
+    ...(ids ? { retrieval: { ...retrievalMetrics(c, ids),
+      ...(judge ? { retrievedButUnused: ids.filter(id => !judge.usedChunkIds.includes(id)).length } : {}),
+      ...(answer.droppedByRerank ? { droppedByRerank: answer.droppedByRerank } : {}),
+    } } : {}) };
 }
 /** Unknown interrupted provider usage remains unknown rather than free. */
 export function retrievalCost(trace: Answer['retrievalTrace']): { dollars: number | null; knownDollars: number; incomplete: boolean } {
@@ -46,17 +69,19 @@ export async function runApproach(options: { approach?: Approach; corpus: Corpus
     const result: CaseResult = { case: c, status: 'answer-error', judgeDollars: 0 };
     results[index] = result;
     try {
-      result.answer = await approach!.answer(c.question);
+      result.answer = await approach!.answer(c.question, c.history);
       const retrieval = retrievalCost(result.answer.retrievalTrace);
       result.retrievalDollars = retrieval.dollars;
       result.retrievalKnownDollars = retrieval.knownDollars;
       result.retrievalCostIncomplete = retrieval.incomplete;
-      result.answerDollars = result.answer.effectiveApproach === 'deterministic' ? 0 : dollars(model, result.answer.usage);
-      result.answerCostIncomplete = !!result.answer.usageIncomplete;
+      result.comparisonEligible = result.answer.effectiveApproach === 'deterministic' || (result.answer.resolvedModel === model && (!result.answer.resolvedModels || result.answer.resolvedModels.every(value => value === model)));
+      const mixedModels = result.answer.resolvedModels && (new Set(result.answer.resolvedModels).size > 1 || result.answer.resolvedModels.includes('__unknown__'));
+      result.answerDollars = result.answer.effectiveApproach === 'deterministic' ? 0 : mixedModels ? null : dollars(result.answer.resolvedModel ?? model, result.answer.usage);
+      result.answerCostIncomplete = !!result.answer.usageIncomplete || !!mixedModels;
       Object.assign(result, grade(c, result.answer));
     } catch (e) {
       result.error = String(e);
-      const failure = e as { usage?: Usage; timings?: Answer['timings']; usageIncomplete?: boolean; retrievalTrace?: Answer['retrievalTrace'] };
+      const failure = e as { usage?: Usage; timings?: Answer['timings']; usageIncomplete?: boolean; retrievalTrace?: Answer['retrievalTrace']; resolvedModel?: string; resolvedModels?: string[] };
       result.retrievalTrace = failure.retrievalTrace;
       const retrieval = retrievalCost(failure.retrievalTrace);
       result.retrievalDollars = retrieval.dollars;
@@ -64,13 +89,14 @@ export async function runApproach(options: { approach?: Approach; corpus: Corpus
       result.retrievalCostIncomplete = retrieval.incomplete;
       result.answerUsage = failure.usage;
       result.answerTimings = failure.timings;
-      result.answerDollars = failure.usage ? dollars(model, failure.usage) : null;
-      result.answerCostIncomplete = !failure.usage || !!failure.usageIncomplete;
+      const mixedFailureModels = failure.resolvedModels && (new Set(failure.resolvedModels).size > 1 || failure.resolvedModels.includes('__unknown__'));
+      result.answerDollars = failure.usage && !mixedFailureModels ? dollars(failure.resolvedModel ?? model, failure.usage) : null;
+      result.answerCostIncomplete = !failure.usage || !!failure.usageIncomplete || !!mixedFailureModels;
       return;
     }
     if (judge) {
       try {
-        const judged = await judge(c, result.answer!.text);
+        const judged = await judge(c, result.answer!.text, { ...result.answer!, ...(result.answer!.suppliedEvidence === undefined && approach!.name === 'whole' ? { suppliedEvidence: buildSystemPrompt(corpus).map(block => block.text).join('\n\n') } : {}) });
         result.judgeUsage = judged.usage;
         result.judgeCostIncomplete = !!judged.usageIncomplete;
         result.judgeDollars = dollars(judgeModel, judged.usage);

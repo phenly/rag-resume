@@ -1,5 +1,19 @@
 import { readFile } from 'node:fs/promises';
 import { categories, type EvalCase } from './types';
+import { MAX_HISTORY_CHARS, MAX_HISTORY_TURNS, type Turn } from '../history';
+
+/** Trusted offline fixtures, never visitor authentication. Snapshot before provider work. */
+export function evalHistory(value: unknown): Turn[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_HISTORY_TURNS || Array.from(value).some(turn =>
+    !turn || typeof turn !== 'object' || Array.isArray(turn)
+    || typeof turn.question !== 'string' || typeof turn.answer !== 'string'
+    || Object.keys(turn).some(key => key !== 'question' && key !== 'answer')))
+    throw new Error('Invalid eval history: expected at most six question/answer fixture turns');
+  if (value.reduce((sum, turn) => sum + turn.question.length + turn.answer.length, 0) > MAX_HISTORY_CHARS)
+    throw new Error('Invalid eval history: character limit exceeded');
+  return value.map(turn => ({ question: turn.question, answer: turn.answer, sig: '' }));
+}
 
 export function validateCases(value: unknown): { version: 1; cases: EvalCase[] } {
   const fail = (message: string): never => { throw new Error(`Invalid eval cases: ${message}`); };
@@ -17,6 +31,7 @@ export function validateCases(value: unknown): { version: 1; cases: EvalCase[] }
     ids.add(c.id as string);
     if (!(categories as readonly unknown[]).includes(c.category)) fail(`${c.id}: invalid category`);
     if (!['decided', 'default', 'open'].includes(c.status as string)) fail(`${c.id}: invalid status`);
+    try { evalHistory(c.history); } catch (error) { fail(`${c.id}: ${String(error)}`); }
     for (const key of ['mustSay', 'mustNotSay', 'goldChunks']) {
       if (!Array.isArray(c[key]) || !(c[key] as unknown[]).every(x => typeof x === 'string')) fail(`${c.id}: ${key} must be a string array`);
     }

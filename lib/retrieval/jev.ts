@@ -15,7 +15,7 @@ export const JEV_BUDGET_POLICY = Object.freeze({
   providerEnforcementSource: 'https://docs.typesafe.ai/api/errors',
 } as const);
 export type JevBudgetMode = 'verified-preflight' | 'provider-enforced';
-export type JevQuestion = { id: string; question: string; context: string };
+export type JevQuestion = { id: string; question: string; context: string; criteria?: { true: string; false: string } };
 export type JevResult = {
   model: typeof JEV_MODEL;
   judgments: { id: string; probability: number }[];
@@ -131,10 +131,13 @@ export function createJevClient(options: {
   return {
     async judge(input, callOptions = {}) {
       if (!Array.isArray(input) || !input.length || Array.from(input).some(item => !record(item) || typeof item.id !== 'string' || !/^[A-Za-z0-9_.:-]{1,128}$/.test(item.id)
-        || typeof item.question !== 'string' || !item.question.trim() || typeof item.context !== 'string') || new Set(input.map(item => item.id)).size !== input.length
+        || typeof item.question !== 'string' || !item.question.trim() || typeof item.context !== 'string'
+        || (item.criteria !== undefined && (!record(item.criteria) || typeof item.criteria.true !== 'string' || !item.criteria.true.trim()
+          || typeof item.criteria.false !== 'string' || !item.criteria.false.trim()
+          || Object.keys(item.criteria).some(key => key !== 'true' && key !== 'false')))) || new Set(input.map(item => item.id)).size !== input.length
         || (callOptions.sharedContext !== undefined && typeof callOptions.sharedContext !== 'string')) throw new JevError('input');
       // Own all request values across the asynchronous counting boundary.
-      const questions = input.map(({ id, question, context }) => ({ id, question, context }));
+      const questions = input.map(({ id, question, context, criteria }) => ({ id, question, context, ...(criteria ? { criteria: { ...criteria } } : {}) }));
       const state = callOptions.sharedContext === undefined ? STATE : { fixedRubric: STATE, untrustedData: { context: callOptions.sharedContext } };
       if (callOptions.signal?.aborted) throw new JevError('cancelled');
       const controller = new AbortController();
@@ -150,8 +153,9 @@ export function createJevClient(options: {
       const timer = setTimeout(() => abort('timeout'), timeoutMs);
       try {
         return await Promise.race([aborted, (async () => {
-          const typedQuestions = Object.fromEntries(questions.map(({ id, question, context }) => [id, {
+          const typedQuestions = Object.fromEntries(questions.map(({ id, question, context, criteria }) => [id, {
             type: 'noul', instructions: { fixedRubric: question, untrustedData: { context } },
+            ...(criteria ? { criteria } : {}),
           }]));
           const body = JSON.stringify({ model: JEV_MODEL, state, questions: typedQuestions });
           if (Buffer.byteLength(body, 'utf8') > JEV_BUDGET_POLICY.maxRequestBytes) throw new JevError('budget');

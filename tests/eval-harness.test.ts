@@ -145,7 +145,7 @@ it('gives the judge response-style context separately from career facts', async 
 it('whole adapter streams through the existing implementation with per-question usage', async () => {
   const stream = vi.fn(() => ({
     async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hello' } }; },
-    finalMessage: async () => ({ stop_reason: 'end_turn', usage: answer.usage }), abort: vi.fn(),
+    finalMessage: async () => ({ model: evalModels.model, stop_reason: 'end_turn', usage: answer.usage }), abort: vi.fn(),
   }));
   const a = wholeApproach({ apiKey: 'fictional', model: 'claude-opus-5-5', effort: 'medium', maxTokens: 1000 }, fakeClient({ beta: { messages: { stream } } }));
   await a.prepare(await corpus());
@@ -238,7 +238,7 @@ it('retains max_tokens answer usage and timings instead of reporting zero spend'
   const usage = { input_tokens: 100, output_tokens: 1500 };
   const stream = () => ({
     async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Fictional partial answer' } }; },
-    finalMessage: async () => ({ stop_reason: 'max_tokens', usage }), abort: vi.fn(),
+    finalMessage: async () => ({ model: evalModels.model, stop_reason: 'max_tokens', usage }), abort: vi.fn(),
   });
   const a = await runApproach({ approach: wholeApproach(streamConfig, fakeClient({ beta: { messages: { stream } } })), corpus: await corpus(), cases: [c], concurrency: 1, ...evalModels });
   expect(a.cases[0]).toMatchObject({ status: 'answer-error', answerUsage: usage, answerTimings: { firstTokenMs: expect.any(Number), totalMs: expect.any(Number) }, answerDollars: dollars(evalModels.model, usage) });
@@ -259,13 +259,13 @@ it('accumulates partial streaming retry usage and flags unavailable final usage'
     return {
       async *[Symbol.asyncIterator]() {
         if (first) {
-          yield { type: 'message_start', message: { usage: { ...partial, output_tokens: 0 } } };
+          yield { type: 'message_start', message: { model: evalModels.model, usage: { ...partial, output_tokens: 0 } } };
           yield { type: 'message_delta', usage: { output_tokens: 7 } };
           throw Object.assign(new Error('fictional overload'), { status: 503 });
         }
         yield { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hello' } };
       },
-      finalMessage: async () => ({ stop_reason: 'end_turn', usage: answer.usage }), abort: vi.fn(),
+      finalMessage: async () => ({ model: evalModels.model, stop_reason: 'end_turn', usage: answer.usage }), abort: vi.fn(),
     };
   };
   const log = vi.spyOn(console, 'error').mockImplementation(() => {});

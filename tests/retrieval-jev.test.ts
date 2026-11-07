@@ -9,6 +9,26 @@ const make = (fetch: typeof globalThis.fetch, timeoutMs?: number, countTokens: (
 afterEach(() => vi.useRealTimers());
 
 describe('pinned direct Jev boundary', () => {
+  it('snapshots optional binary criteria and includes them in provider requests and token checks', async () => {
+    let release!: (value: number) => void;
+    const countTokens = vi.fn().mockImplementationOnce(() => new Promise<number>(resolve => { release = resolve; })).mockResolvedValue(100);
+    const fetch = fetchFor(payload());
+    const criteria = { true: 'Explicit career facts.', false: 'Private or prohibited material.' };
+    const pending = make(fetch, undefined, countTokens).judge([{ ...questions[0], criteria }]);
+    criteria.true = 'Mutated after submission.';
+    release(100);
+    await pending;
+    const body = JSON.parse(fetch.mock.calls[0][1]!.body as string);
+    expect(body.questions['candidate:a'].criteria).toEqual({ true: 'Explicit career facts.', false: 'Private or prohibited material.' });
+    for (const [text] of countTokens.mock.calls) expect(JSON.parse(text).questions['candidate:a'].criteria.true).toBe('Explicit career facts.');
+  });
+
+  it.each([null, {}, { true: 'yes' }, { true: '', false: 'no' }, { true: 'yes', false: 1 }, { true: 'yes', false: 'no', extra: 'bad' }])('rejects malformed binary criteria before provider work: %j', async criteria => {
+    const fetch = fetchFor(payload());
+    await expect(make(fetch).judge([{ ...questions[0], criteria } as never])).rejects.toMatchObject({ code: 'input' });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('pins model, separates data from rubric and returns ordered probabilities with billing', async () => {
     const fetch = fetchFor(payload());
     expect(await make(fetch).judge(questions)).toEqual({ model: JEV_MODEL, judgments: [{ id: 'candidate:a', probability: 0.7 }], inputTokens: 120, outputTokens: 12, costUsd: 120 * 0.042 / 1_000_000, budgetMode: 'verified-preflight', budgetPolicyVersion: JEV_BUDGET_POLICY.version });

@@ -8,7 +8,7 @@ import { validateRetrievalIndex } from './index-schema';
 import { JEV_BUDGET_POLICY, type JevClient } from './jev';
 import { inspectRetrievalIndex } from './load';
 import { buildRetrievalQuery, RETRIEVAL_QUERY_VERSION, type QueryTokenCounter, type VerifiedQueryTurn } from './query';
-import { rerankEvidence, RERANK_CONFIG, type EvidenceTokenCounter, type RerankTrace } from './rerank';
+import { rerankEvidence, RERANK_CONFIG, ROUTE_RUBRICS, type EvidenceTokenCounter, type RerankTrace } from './rerank';
 import { HYBRID_SEARCH_CONFIG, prepareHybridSearch, type SearchTrace } from './search';
 import { TOKEN_BUDGET_VERSION } from './token-budget';
 import { VOYAGE_EMBEDDING_CONFIG, type Embedder } from './voyage';
@@ -18,7 +18,7 @@ import { VOYAGE_TOKENIZER } from './voyage-tokenizer';
 export const RETRIEVAL_PIPELINE_CONFIG = Object.freeze({
   version: 'rag-pipeline-1', totalTimeoutMs: 5000, embeddingTimeoutMs: 2000,
   embeddingUsdPerMillionTokens: 0.12, routingResponses: 'safe-routes-1',
-  query: RETRIEVAL_QUERY_VERSION, search: HYBRID_SEARCH_CONFIG, selection: RERANK_CONFIG,
+  query: RETRIEVAL_QUERY_VERSION, search: HYBRID_SEARCH_CONFIG, selection: RERANK_CONFIG, routeRubrics: ROUTE_RUBRICS,
   embedding: VOYAGE_EMBEDDING_CONFIG, tokenizer: VOYAGE_TOKENIZER,
   jevBudget: JEV_BUDGET_POLICY, jevMode: 'provider-enforced',
   tokenBudget: TOKEN_BUDGET_VERSION, prompt: PROMPT_TEMPLATE_VERSION,
