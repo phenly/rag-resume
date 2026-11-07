@@ -1,12 +1,12 @@
 import type { RetrievalUnit } from './extract';
 import type { FusedMatch } from './search';
-import type { JevClient, JevQuestion } from './jev';
+import { JEV_BUDGET_POLICY, type JevBudgetMode, type JevClient, type JevQuestion } from './jev';
 
 /** Provisional policy, versioned independently of corpus/index identity. */
-export const RERANK_CONFIG = Object.freeze({ version: 'jev-selection-1', model: 'jev-1.13.0', relevance: 0.35, routeConfidence: 0.90, adequacy: 0.70, maxUnits: 8, evidenceTokens: 6000, timeoutMs: 3000 });
+export const RERANK_CONFIG = Object.freeze({ version: 'jev-selection-2', model: 'jev-1.13.0', relevance: 0.35, routeConfidence: 0.90, adequacy: 0.70, maxUnits: 8, evidenceTokens: 6000, timeoutMs: 3000 });
 export type EvidenceCandidate = { unit: RetrievalUnit; match: FusedMatch };
 export type EvidenceDecision = { id: string; relevance: number; reason: 'selected' | 'relevance' | 'top-eight' | 'token-budget'; tokens?: number };
-export type RerankReceipt = { status: 'complete'; inputTokens: number; outputTokens: number; costUsd: number } | { status: 'usage-unknown' };
+export type RerankReceipt = { status: 'complete'; inputTokens: number; outputTokens: number; costUsd: number; budgetMode?: JevBudgetMode; budgetPolicyVersion?: string } | { status: 'usage-unknown' };
 export type RerankTrace = { configVersion: string; decisions: EvidenceDecision[]; relevance: { id: string; probability: number }[]; routes?: Record<string, number>; adequacy?: number; calls: RerankReceipt[] };
 export type RerankResult =
   | { kind: 'evidence'; selected: RetrievalUnit[]; tokens: number; trace: RerankTrace }
@@ -69,13 +69,16 @@ export async function rerankEvidence(options: {
         if (controller.signal.aborted) throw new Error('aborted');
         if (result.model !== RERANK_CONFIG.model || !Array.isArray(result.judgments) || result.judgments.length !== questions.length
           || !validCount(result.inputTokens) || !validCount(result.outputTokens) || !Number.isFinite(result.costUsd) || result.costUsd < 0) throw new Error('judgment');
+        if ((result.budgetMode !== undefined || result.budgetPolicyVersion !== undefined)
+          && (!['verified-preflight', 'provider-enforced'].includes(result.budgetMode ?? '') || result.budgetPolicyVersion !== JEV_BUDGET_POLICY.version)) throw new Error('judgment');
         const expected = new Set(questions.map(item => item.id));
         const scores = new Map<string, number>();
         for (const item of result.judgments) {
           if (!expected.has(item.id) || scores.has(item.id) || !probability(item.probability)) throw new Error('judgment');
           scores.set(item.id, item.probability);
         }
-        trace.calls[receiptIndex] = { status: 'complete', inputTokens: result.inputTokens, outputTokens: result.outputTokens, costUsd: result.costUsd };
+        trace.calls[receiptIndex] = { status: 'complete', inputTokens: result.inputTokens, outputTokens: result.outputTokens, costUsd: result.costUsd,
+          ...(result.budgetMode ? { budgetMode: result.budgetMode, budgetPolicyVersion: result.budgetPolicyVersion } : {}) };
         return scores;
       };
       const scores = await judge([
@@ -95,13 +98,54 @@ export async function rerankEvidence(options: {
         .sort((a, b) => b.relevance - a.relevance || b.match.score - a.match.score || stableId(a.unit.id, b.unit.id));
       const selected: RetrievalUnit[] = [];
       let tokens = 0;
-      const count = async (units: readonly RetrievalUnit[]) => {
+      // Request-local memoization keeps exact renderings isolated from other visitors.
+      const counts = new Map<string, Promise<number>>();
+      const count = (units: readonly RetrievalUnit[]): Promise<number> => {
+        const text = options.renderEvidence(units);
+        const cached = counts.get(text);
+        if (cached) return cached;
+        const pending = measure(text);
+        counts.set(text, pending);
+        return pending;
+      };
+      const measure = async (text: string) => {
         stage = 'token-counter';
-        const value = await options.countEvidenceTokens(options.renderEvidence(units), { signal: controller.signal });
+        const value = await options.countEvidenceTokens(text, { signal: controller.signal });
         if (!validCount(value) || controller.signal.aborted) throw new Error('token-counter');
         return value;
       };
-      for (const { unit, relevance } of ranked) {
+      const proposed = ranked.filter(item => item.relevance >= RERANK_CONFIG.relevance).slice(0, RERANK_CONFIG.maxUnits);
+      if (proposed.length) {
+        // Common path: verify the entire top-eight block and each complete entry.
+        // Four workers bound provider concurrency. Never infer additivity or
+        // monotonicity of token counts across independently rendered requests.
+        const jobs = [() => count(proposed.map(item => item.unit)), ...proposed.map(({ unit }) => () => count([unit]))];
+        const measured: number[] = [];
+        let next = 0;
+        await Promise.all(Array.from({ length: Math.min(4, jobs.length) }, async () => {
+          while (next < jobs.length) {
+            if (controller.signal.aborted) throw new Error('aborted');
+            const index = next++;
+            measured[index] = await jobs[index]();
+          }
+        }));
+        if (controller.signal.aborted) throw new Error('aborted');
+        if (measured[0] <= RERANK_CONFIG.evidenceTokens
+          && measured.slice(1).every(value => value <= RERANK_CONFIG.evidenceTokens)) {
+          selected.push(...proposed.map(item => item.unit));
+          tokens = measured[0];
+          const selectedIds = new Set(selected.map(unit => unit.id));
+          for (const { unit, relevance } of ranked) {
+            trace.decisions.push({ id: unit.id, relevance,
+              reason: relevance < RERANK_CONFIG.relevance ? 'relevance' : selectedIds.has(unit.id) ? 'selected' : 'top-eight',
+              ...(selectedIds.has(unit.id) ? { tokens } : {}),
+            });
+          }
+        }
+      }
+      // On an over-budget proposal preserve the original greedy semantics,
+      // reusing exact counts from above; this exceptional path may still time out.
+      if (!selected.length) for (const { unit, relevance } of ranked) {
         if (controller.signal.aborted) throw new Error('aborted');
         if (relevance < RERANK_CONFIG.relevance) { trace.decisions.push({ id: unit.id, relevance, reason: 'relevance' }); continue; }
         if (selected.length === RERANK_CONFIG.maxUnits) { trace.decisions.push({ id: unit.id, relevance, reason: 'top-eight' }); continue; }
@@ -120,5 +164,5 @@ export async function rerankEvidence(options: {
     };
     return await Promise.race([run(), stopped]);
   } catch { return fallback(stopReason ?? stage); }
-  finally { clearTimeout(timer); options.signal?.removeEventListener('abort', cancel); }
+  finally { clearTimeout(timer); options.signal?.removeEventListener('abort', cancel); controller.abort(); }
 }

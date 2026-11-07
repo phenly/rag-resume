@@ -3,6 +3,18 @@
 export const JEV_MODEL = 'jev-1.13.0';
 export const JEV_INPUT_USD_PER_MILLION = 0.042;
 export const JEV_CONTEXT_LIMITS = Object.freeze({ request: 64_000, question: 32_000 });
+/** Checked 2026-11-06: https://docs.typesafe.ai/api/errors and /models.
+ * Bytes defend request resources; they are never presented as a token estimate.
+ * Provider-enforced mode relies on documented max_tokens_exceeded rejection,
+ * without enabling long context, retrying, or accepting partial judgments.
+ */
+export const JEV_BUDGET_POLICY = Object.freeze({
+  version: 'jev-context-enforcement-1',
+  maxRequestBytes: 32 * 1024 * 1024,
+  defaultMode: 'verified-preflight',
+  providerEnforcementSource: 'https://docs.typesafe.ai/api/errors',
+} as const);
+export type JevBudgetMode = 'verified-preflight' | 'provider-enforced';
 export type JevQuestion = { id: string; question: string; context: string };
 export type JevResult = {
   model: typeof JEV_MODEL;
@@ -10,6 +22,9 @@ export type JevResult = {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+  /** Optional for injected clients; production adapters always record enforcement. */
+  budgetMode?: JevBudgetMode;
+  budgetPolicyVersion?: string;
 };
 export type JevClient = {
   judge(questions: readonly JevQuestion[], options?: { signal?: AbortSignal; sharedContext?: string }): Promise<JevResult>;
@@ -89,20 +104,29 @@ function parseResponse(value: unknown, questions: readonly JevQuestion[]): JevRe
 }
 
 /**
- * countTokens must supply a verified upper bound in Jev provider tokens for the
- * serialized request/context, including framing overhead. No tokenizer is guessed
- * here. Without a verified counter this adapter is not ready for production use.
+ * Default mode requires a verified Jev token upper bound including framing.
+ * Explicit provider-enforced mode instead relies on server context validation;
+ * it has no preflight token guarantee. Neither mode guesses a tokenizer.
  * The deadline covers counting, transport, and body parsing; no implicit retries.
  */
 export function createJevClient(options: {
   apiKey: string;
-  countTokens: (serializedContext: string, signal?: AbortSignal) => Promise<number>;
   fetch?: typeof fetch;
   timeoutMs?: number;
-}): JevClient {
+} & ({
+  budgetMode?: 'verified-preflight';
+  countTokens: (serializedContext: string, signal?: AbortSignal) => Promise<number>;
+} | {
+  budgetMode: 'provider-enforced';
+  countTokens?: never;
+})): JevClient {
   const timeoutMs = options.timeoutMs ?? 3000;
+  const budgetMode = options.budgetMode ?? 'verified-preflight';
+  const countTokens = options.countTokens;
   if (typeof options.apiKey !== 'string' || !options.apiKey.trim() || /\s/.test(options.apiKey)
-    || typeof options.countTokens !== 'function' || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_483_647) throw new JevError('configuration');
+    || !['verified-preflight', 'provider-enforced'].includes(budgetMode)
+    || (budgetMode === 'verified-preflight' ? typeof countTokens !== 'function' : countTokens !== undefined)
+    || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_483_647) throw new JevError('configuration');
   const request = options.fetch ?? globalThis.fetch;
   return {
     async judge(input, callOptions = {}) {
@@ -130,25 +154,29 @@ export function createJevClient(options: {
             type: 'noul', instructions: { fixedRubric: question, untrustedData: { context } },
           }]));
           const body = JSON.stringify({ model: JEV_MODEL, state, questions: typedQuestions });
+          if (Buffer.byteLength(body, 'utf8') > JEV_BUDGET_POLICY.maxRequestBytes) throw new JevError('budget');
+          if (controller.signal.aborted) throw new JevError(abortCode ?? 'cancelled');
           const measure = async (serialized: string, limit: number) => {
             let tokens: number;
-            try { tokens = await options.countTokens(serialized, controller.signal); } catch { throw new JevError('count'); }
+            try { tokens = await countTokens!(serialized, controller.signal); } catch { throw new JevError('count'); }
             if (!count(tokens)) throw new JevError('count');
             if (tokens > limit) throw new JevError('budget');
             if (controller.signal.aborted) throw new JevError(abortCode ?? 'cancelled');
           };
-          await measure(body, JEV_CONTEXT_LIMITS.request);
-          for (const [id, question] of Object.entries(typedQuestions)) {
-            await measure(JSON.stringify({ model: JEV_MODEL, state, questions: { [id]: question } }), JEV_CONTEXT_LIMITS.question);
+          if (budgetMode === 'verified-preflight') {
+            await measure(body, JEV_CONTEXT_LIMITS.request);
+            for (const [id, question] of Object.entries(typedQuestions)) {
+              await measure(JSON.stringify({ model: JEV_MODEL, state, questions: { [id]: question } }), JEV_CONTEXT_LIMITS.question);
+            }
           }
           const response = await request('https://api.typesafe.ai/v1/systemone', {
             method: 'POST', redirect: 'error', signal: controller.signal,
             headers: { Authorization: `Bearer ${options.apiKey}`, 'Content-Type': 'application/json' }, body,
           });
-          if (!response.ok) throw new JevError('http', response.status);
+          if (response.status !== 200) throw new JevError('http', response.status);
           let parsed: unknown;
           try { parsed = parseUniqueJson(await response.text()); } catch { throw new JevError('response'); }
-          return parseResponse(parsed, questions);
+          return { ...parseResponse(parsed, questions), budgetMode, budgetPolicyVersion: JEV_BUDGET_POLICY.version };
         })()]);
       } catch (error) {
         if (abortCode) throw new JevError(abortCode);

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createJevClient, JEV_CONTEXT_LIMITS, JEV_MODEL, JevError } from '../lib/retrieval/jev';
+import { createJevClient, JEV_BUDGET_POLICY, JEV_CONTEXT_LIMITS, JEV_MODEL, JevError } from '../lib/retrieval/jev';
 
 const questions = [{ id: 'candidate:a', question: 'Is this passage relevant?', context: 'A fictional widget project.' }];
 const payload = () => ({ model: JEV_MODEL, answers: { 'candidate:a': { type: 'noul', noul: 0.7 } }, usage: { input_tokens: 120, output_tokens: 12 } });
@@ -11,7 +11,7 @@ afterEach(() => vi.useRealTimers());
 describe('pinned direct Jev boundary', () => {
   it('pins model, separates data from rubric and returns ordered probabilities with billing', async () => {
     const fetch = fetchFor(payload());
-    expect(await make(fetch).judge(questions)).toEqual({ model: JEV_MODEL, judgments: [{ id: 'candidate:a', probability: 0.7 }], inputTokens: 120, outputTokens: 12, costUsd: 120 * 0.042 / 1_000_000 });
+    expect(await make(fetch).judge(questions)).toEqual({ model: JEV_MODEL, judgments: [{ id: 'candidate:a', probability: 0.7 }], inputTokens: 120, outputTokens: 12, costUsd: 120 * 0.042 / 1_000_000, budgetMode: 'verified-preflight', budgetPolicyVersion: JEV_BUDGET_POLICY.version });
     const [url, options] = fetch.mock.calls[0];
     expect(url).toBe('https://api.typesafe.ai/v1/systemone');
     expect(options?.redirect).toBe('error');
@@ -165,12 +165,87 @@ describe('pinned direct Jev boundary', () => {
     vi.useFakeTimers();
     const fetch = vi.fn<typeof globalThis.fetch>();
     if (phase === 'fetch') fetch.mockReturnValue(new Promise(() => {}));
-    else fetch.mockResolvedValue({ ok: true, text: () => new Promise(() => {}) } as Response);
+    else fetch.mockResolvedValue({ status: 200, text: () => new Promise(() => {}) } as Response);
     const countTokens = phase === 'count' ? () => new Promise<number>(() => {}) : counter;
     const pending = make(fetch, 25, countTokens).judge(questions);
     const assertion = expect(pending).rejects.toMatchObject({ code: 'timeout' });
     await vi.advanceTimersByTimeAsync(25); await assertion;
     if (phase === 'count') expect(fetch).not.toHaveBeenCalled();
     else expect(fetch.mock.calls[0][1]?.signal?.aborted).toBe(true);
+  });
+});
+
+
+describe('explicit provider-enforced Jev context mode', () => {
+  const makeProvider = (fetch: typeof globalThis.fetch, timeoutMs?: number) => createJevClient({ apiKey: 'fictional-key', budgetMode: 'provider-enforced', fetch, timeoutMs });
+
+  it('records its versioned policy and sends complete data without long-context escalation', async () => {
+    const fetch = fetchFor(payload());
+    const context = '完整 fictional passage. '.repeat(10);
+    const result = await makeProvider(fetch).judge([{ ...questions[0], context }]);
+    expect(result).toMatchObject({ budgetMode: 'provider-enforced', budgetPolicyVersion: JEV_BUDGET_POLICY.version });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [, options] = fetch.mock.calls[0];
+    expect(options?.headers).toEqual({ Authorization: 'Bearer fictional-key', 'Content-Type': 'application/json' });
+    expect(JSON.parse(options?.body as string).questions['candidate:a'].instructions.untrustedData.context).toBe(context);
+  });
+
+  it('requires explicit mode and rejects ambiguous or unknown configuration', () => {
+    for (const config of [
+      { apiKey: 'fictional-key' },
+      { apiKey: 'fictional-key', budgetMode: 'unknown', countTokens: counter },
+      { apiKey: 'fictional-key', budgetMode: 'provider-enforced', countTokens: counter },
+    ]) expect(() => createJevClient(config as never)).toThrow(JevError);
+  });
+
+  it('enforces the exact UTF-8 byte boundary independently of token limits', async () => {
+    const probe = fetchFor(payload());
+    await makeProvider(probe).judge([{ ...questions[0], context: '' }]);
+    const framingBytes = Buffer.byteLength(probe.mock.calls[0][1]?.body as string, 'utf8');
+    const remaining = JEV_BUDGET_POLICY.maxRequestBytes - framingBytes;
+    // A multibyte payload catches accidental use of JS string length.
+    const context = '界'.repeat(Math.floor(remaining / 3)) + 'x'.repeat(remaining % 3);
+    const fetch = fetchFor(payload());
+    await expect(makeProvider(fetch).judge([{ ...questions[0], context }])).resolves.toMatchObject({ budgetMode: 'provider-enforced' });
+    expect(Buffer.byteLength(fetch.mock.calls[0][1]?.body as string, 'utf8')).toBe(JEV_BUDGET_POLICY.maxRequestBytes);
+    const over = fetchFor(payload());
+    await expect(makeProvider(over).judge([{ ...questions[0], context: context + 'x' }])).rejects.toMatchObject({ code: 'budget' });
+    expect(over).not.toHaveBeenCalled();
+  });
+
+  it.each([201, 202, 206, 400, 413, 422, 429, 529])('rejects HTTP %s without retry or exposing provider content', async status => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(JSON.stringify({ error: 'max_tokens_exceeded', private: 'fictional private text', ...payload() }), { status }));
+    await expect(makeProvider(fetch).judge(questions)).rejects.toMatchObject({ code: 'http', status, message: `Jev http (HTTP ${status})` });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([{}, { ...payload(), model: 'jev-latest' }, { ...payload(), usage: undefined }])('rejects invalid successful response', async body => {
+    await expect(makeProvider(fetchFor(body)).judge(questions)).rejects.toMatchObject({ code: 'response' });
+  });
+
+  it('rejects pre-cancellation without sending', async () => {
+    const fetch = fetchFor(payload()); const controller = new AbortController(); controller.abort();
+    await expect(makeProvider(fetch).judge(questions, { signal: controller.signal })).rejects.toMatchObject({ code: 'cancelled' });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('cancels stalled transport even when transport ignores cancellation', async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockReturnValue(new Promise(() => {}));
+    const controller = new AbortController();
+    const pending = makeProvider(fetch).judge(questions, { signal: controller.signal });
+    const assertion = expect(pending).rejects.toMatchObject({ code: 'cancelled' });
+    controller.abort(); await assertion;
+    expect(fetch.mock.calls[0][1]?.signal?.aborted).toBe(true);
+  });
+
+  it.each(['transport', 'body'] as const)('keeps deadline over stalled %s', async phase => {
+    vi.useFakeTimers();
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    if (phase === 'transport') fetch.mockReturnValue(new Promise(() => {}));
+    else fetch.mockResolvedValue({ status: 200, text: () => new Promise(() => {}) } as Response);
+    const pending = makeProvider(fetch, 25).judge(questions);
+    const assertion = expect(pending).rejects.toMatchObject({ code: 'timeout' });
+    await vi.advanceTimersByTimeAsync(25); await assertion;
+    expect(fetch.mock.calls[0][1]?.signal?.aborted).toBe(true);
   });
 });

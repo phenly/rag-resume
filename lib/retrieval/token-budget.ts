@@ -61,6 +61,8 @@ async function guardedCount(operation: () => PromiseLike<{ input_tokens: number 
  * tokenizer, preflight count endpoint, or framing upper bound (checked 2026-11-06):
  * https://docs.typesafe.ai/api/system-one, https://docs.typesafe.ai/models,
  * https://docs.typesafe.ai/llms.txt. That absence blocks a built-in Jev counter.
+ * createJevClient separately offers explicit provider-enforced context validation;
+ * this strict counter adapter never claims it is preflight counting.
  * Do not substitute character/byte ratios, another provider's tokenizer, or usage
  * from an earlier request for either provider's verified preflight count.
  */

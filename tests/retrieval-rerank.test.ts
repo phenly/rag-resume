@@ -32,10 +32,11 @@ describe('Jev selection and complete evidence packing', () => {
       expect((init!.body as string).split(options.alwaysMaterial)).toHaveLength(2);
       return new Response(JSON.stringify({ model: 'jev-1.13.0', answers: Object.fromEntries(Object.keys(body.questions).map(id => [id, { type: 'noul', noul: id.startsWith('candidate_') || id === 'route_answer' || id === 'adequacy' ? 1 : 0 }])), usage: { input_tokens: 100, output_tokens: 0 } }));
     });
-    const judge = createJevClient({ apiKey: 'fictional-key', countTokens: async () => 100, fetch: transport as typeof fetch });
+    const judge = createJevClient({ apiKey: 'fictional-key', budgetMode: 'provider-enforced', fetch: transport as typeof fetch });
     const result = await rerankEvidence({ ...options, judge });
     expect(result.kind).toBe('evidence');
     expect(transport).toHaveBeenCalledTimes(2);
+    expect(result.trace.calls).toEqual([expect.objectContaining({ budgetMode: 'provider-enforced', budgetPolicyVersion: 'jev-context-enforcement-1' }), expect.objectContaining({ budgetMode: 'provider-enforced' })]);
     expect(result.trace.decisions.filter(item => item.reason === 'selected')).toHaveLength(8);
     expect(result.trace.relevance).toHaveLength(24);
   });
@@ -97,6 +98,56 @@ describe('Jev selection and complete evidence packing', () => {
     expect(await rerankEvidence(options)).toMatchObject({ kind: 'evidence', tokens: 6000 });
     options.countEvidenceTokens.mockResolvedValue(NaN);
     expect(await rerankEvidence(options)).toMatchObject({ kind: 'fallback', reason: 'token-counter' });
+  });
+  it('counts eight complete entries and their full block with at most four concurrent calls', async () => {
+    const options = setup(Array.from({ length: 24 }, (_, i) => candidate(`EX-${String(i).padStart(2, '0')}`, 24 - i)));
+    let active = 0;
+    let peak = 0;
+    options.countEvidenceTokens.mockImplementation(async () => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise(resolve => setTimeout(resolve, 1));
+      active--;
+      return 100;
+    });
+    const result = await rerankEvidence(options);
+    expect(result.kind).toBe('evidence');
+    expect(peak).toBe(4);
+    expect(active).toBe(0);
+    expect(options.countEvidenceTokens).toHaveBeenCalledTimes(9);
+    expect(new Set(options.countEvidenceTokens.mock.calls.map(([text]) => text)).size).toBe(9);
+    expect(result.trace.decisions.filter(item => item.reason === 'selected')).toHaveLength(8);
+    expect(result.trace.decisions.filter(item => item.reason === 'top-eight')).toHaveLength(16);
+  });
+  it('memoizes the single-entry proposal without assuming token counts are additive', async () => {
+    const options = setup();
+    expect((await rerankEvidence(options)).kind).toBe('evidence');
+    expect(options.countEvidenceTokens).toHaveBeenCalledOnce();
+  });
+  it('keeps exact greedy packing when the top block does not fit', async () => {
+    const options = setup([candidate('EX-A', 3), candidate('EX-B', 2), candidate('EX-C', 1)]);
+    options.countEvidenceTokens.mockImplementation(async text => {
+      const ids = ['EX-A', 'EX-B', 'EX-C'].filter(id => text.includes(id));
+      return ids.includes('EX-A') && ids.includes('EX-B') ? 6001 : 2000;
+    });
+    const result = await rerankEvidence(options);
+    expect(result.kind).toBe('evidence');
+    if (result.kind === 'evidence') expect(result.selected.map(unit => unit.id)).toEqual(['EX-A', 'EX-C']);
+    expect(result.trace.decisions).toContainEqual(expect.objectContaining({ id: 'EX-B', reason: 'token-budget' }));
+    const texts = options.countEvidenceTokens.mock.calls.map(([text]) => text);
+    expect(new Set(texts).size).toBe(texts.length);
+  });
+  it('cancels speculative counts and starts no new jobs after a counter fails', async () => {
+    const options = setup(Array.from({ length: 8 }, (_, i) => candidate(`EX-${i}`)));
+    let requestSignal: AbortSignal | undefined;
+    options.countEvidenceTokens = vi.fn(async (_text: string, callOptions?: { signal: AbortSignal }) => {
+      requestSignal = callOptions?.signal;
+      throw new Error('fictional provider failure');
+    });
+    expect(await rerankEvidence(options)).toMatchObject({ kind: 'fallback', reason: 'token-counter' });
+    expect(requestSignal?.aborted).toBe(true);
+    expect(options.countEvidenceTokens).toHaveBeenCalledTimes(4);
+    expect(options.judge.judge).toHaveBeenCalledOnce();
   });
   it('rejects duplicate and mismatched candidate IDs before judgment', async () => {
     const malformed = setup([null as unknown as EvidenceCandidate]);
