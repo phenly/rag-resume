@@ -88,6 +88,7 @@ export async function POST(request: Request): Promise<Response> {
   let rawHistory: unknown;
   try {
     const body = (await request.json()) as { question?: unknown; history?: unknown } | null;
+    if (body && Object.hasOwn(body, "approach")) return json(400, "The answer approach is configured by the server.");
     question = body?.question;
     rawHistory = body?.history;
   } catch {

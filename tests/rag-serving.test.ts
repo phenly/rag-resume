@@ -55,3 +55,8 @@ it('does not call providers for an already disconnected request', async () => {
   const { POST } = await import('../app/api/ask/route'); await (await POST(request({ question: 'widgets?' }, AbortSignal.abort()))).text();
   expect(mocks.prepare).not.toHaveBeenCalled(); expect(mocks.generate).not.toHaveBeenCalled();
 });
+it('rejects visitor approach overrides before preparing providers', async () => {
+  const { POST } = await import('../app/api/ask/route');
+  expect((await POST(request({ question: 'widgets?', approach: 'whole' }))).status).toBe(400);
+  expect(mocks.prepare).not.toHaveBeenCalled(); expect(mocks.generate).not.toHaveBeenCalled();
+});
