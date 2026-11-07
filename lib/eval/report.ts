@@ -3,7 +3,7 @@ import path from 'node:path';
 import { categories, type ApproachResult, type CaseResult } from './types';
 import type { countCorpus } from './corpus';
 export type Run = {
-  version: 1; startedAt: string; answerModel: string; judgeModel: string | null;
+  version: 1; promptTemplateVersion?: string; startedAt: string; answerModel: string; judgeModel: string | null;
   corpus: { version: string; chunkCount: number; tokens?: Awaited<ReturnType<typeof countCorpus>>; tokenError?: string };
   approaches: ApproachResult[];
 };
@@ -48,7 +48,8 @@ export function report(run: Run): string {
   const t = run.corpus.tokens?.total;
   const pressure = t === undefined ? 'unavailable' : t < 50000 ? '<50k: fine' : t < 100000 ? '50–100k: monitor' : t <= 200000 ? '100–200k: strains' : t < 500000 ? '200–500k: beyond strain range' : '500k+: RAG required';
   const lines = [`# CV-AI evaluation — ${run.startedAt}`, '', `Corpus: ${run.corpus.version}; chunks: ${run.corpus.chunkCount}.`,
-    `Answer model: ${run.answerModel}; judge: ${run.judgeModel ?? 'disabled'}.`, '',
+    `Answer model: ${run.answerModel}; judge: ${run.judgeModel ?? 'disabled'}.`,
+    `Prompt template: ${run.promptTemplateVersion ?? run.corpus.tokens?.promptTemplateVersion ?? 'historical/unrecorded'}.`, '',
     `Exact prompt tokens: ${t ?? 'unavailable'} — ${pressure}.`, run.corpus.tokens?.note ?? (run.corpus.tokenError ? `Token counting error: ${run.corpus.tokenError}` : 'Token counting skipped: no built approach selected.'), '',
     '| Corpus part | API tokens |', '| --- | ---: |', ...Object.entries(run.corpus.tokens?.parts ?? {}).map(([k, v]) => `| ${k} | ${v} |`), ''];
   for (const a of run.approaches) {
@@ -97,6 +98,6 @@ export async function writeRun(out: string, run: Run): Promise<string> {
   const summaries = run.approaches.map(a => ({ name: a.name, status: a.status, ...summarize(a) }));
   await writeFile(path.join(dir, 'results.json'), JSON.stringify({ ...run, summaries }, null, 2) + '\n');
   await writeFile(path.join(dir, 'report.md'), report(run));
-  await appendFile(path.join(out, 'runs.jsonl'), JSON.stringify({ startedAt: run.startedAt, corpusVersion: run.corpus.version, answerModel: run.answerModel, judgeModel: run.judgeModel, dir, summaries }) + '\n');
+  await appendFile(path.join(out, 'runs.jsonl'), JSON.stringify({ startedAt: run.startedAt, corpusVersion: run.corpus.version, promptTemplateVersion: run.promptTemplateVersion, answerModel: run.answerModel, judgeModel: run.judgeModel, dir, summaries }) + '\n');
   return dir;
 }

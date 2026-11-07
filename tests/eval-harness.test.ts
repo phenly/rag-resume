@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { loadCorpus } from '../lib/corpus';
-import { buildSystemPrompt } from '../lib/prompt';
+import { buildSystemPrompt, publicProfileText, PROMPT_TEMPLATE_VERSION } from '../lib/prompt';
 import { readCases, validateCases } from '../lib/eval/cases';
 import { grade, runApproach } from '../lib/eval/runner';
 import { dollars } from '../lib/eval/pricing';
@@ -114,8 +114,9 @@ it('counts the exact live prompt and independent parts via the mocked SDK', asyn
   const counts = await countCorpus(fakeClient({ beta: { messages: { countTokens } } }), 'claude-opus-5-5', cp);
   expect(countTokens.mock.calls[0][0]).toEqual({ model: 'claude-opus-5-5', messages: [{ role: 'user', content: '.' }] });
   expect(countTokens.mock.calls[1][0]).toEqual({ model: 'claude-opus-5-5', system: buildSystemPrompt(cp), messages: [{ role: 'user', content: '.' }] });
-  expect(counts).toMatchObject({ total: 123, parts: { careerChunks: 123, profile: 123, globalRules: 0 } });
+  expect(counts).toMatchObject({ promptTemplateVersion: PROMPT_TEMPLATE_VERSION, total: 123, parts: { careerChunks: 123, profile: 123, globalRules: 0 } });
   const index = await chunkIndex(path.resolve('sample-corpus'), cp);
+  expect(index.text).toContain(publicProfileText(cp.profile));
   expect(index.ids).toContain('QFS-ROUTE-01'); expect(new Set(index.ids).size).toBe(index.ids.length);
 });
 it('retries at most twice, only for transient errors', async () => {
@@ -157,11 +158,18 @@ it('reports rag as not built and writes JSON, markdown, and append-only trends',
   expect(a).toMatchObject({ name: 'rag', status: 'not built', cases: [] });
   const run: Run = { version: 1, startedAt: '2026-11-03T12:34:56.000Z', answerModel: 'claude-opus-5-5', judgeModel: null, corpus: { version: '1234567890', chunkCount: 2 }, approaches: [a] };
   expect(report(run)).toContain('rag — not built');
+  expect(report(run)).toContain('Prompt template: historical/unrecorded.');
+  run.promptTemplateVersion = PROMPT_TEMPLATE_VERSION;
+  expect(report(run)).toContain(`Prompt template: ${PROMPT_TEMPLATE_VERSION}.`);
   const out = await mkdtemp(path.join(os.tmpdir(), 'eval-test-'));
   try {
     const dir = await writeRun(out, run); const second = await writeRun(out, run);
     expect(path.basename(dir)).toBe('2026-11-03T1234-12345678'); expect(second).not.toBe(dir);
-    expect(JSON.parse(await readFile(path.join(dir, 'results.json'), 'utf8')).approaches[0].status).toBe('not built');
+    const saved = JSON.parse(await readFile(path.join(dir, 'results.json'), 'utf8'));
+    expect(saved.approaches[0].status).toBe('not built');
+    expect(saved.promptTemplateVersion).toBe(PROMPT_TEMPLATE_VERSION);
+    const trends = (await readFile(path.join(out, 'runs.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    expect(trends.every(row => row.promptTemplateVersion === PROMPT_TEMPLATE_VERSION)).toBe(true);
     expect((await readFile(path.join(out, 'runs.jsonl'), 'utf8')).trim().split('\n')).toHaveLength(2);
   } finally { await rm(out, { recursive: true, force: true }); }
 });
