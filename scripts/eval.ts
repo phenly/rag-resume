@@ -6,11 +6,13 @@ import { chunkIndex, countCorpus } from '../lib/eval/corpus';
 import { createJudge } from '../lib/eval/judge';
 import { runApproach } from '../lib/eval/runner';
 import { writeRun, type Run } from '../lib/eval/report';
+import { ragApproach } from '../lib/eval/rag';
 import { wholeApproach } from '../lib/eval/whole';
+import { RETRIEVAL_CONFIG_VERSION } from '../lib/retrieval/pipeline';
 import { PROMPT_TEMPLATE_VERSION } from '../lib/prompt';
 
 const help = `Usage: npm run eval -- --cases <path> --out <dir> [options]
-  --approach whole|rag|both  Default: whole; rag is not built
+  --approach whole|rag|both  Default: whole; rag requires retrieval provider keys and a context limit
   --only id,id              Run selected case IDs
   --concurrency N           After the first question; default 3 (first is serial)
   --no-judge                Run checks only; no quality pass rate
@@ -42,10 +44,8 @@ async function main(args: string[]) {
   const dir = resolveCorpusDir();
   const corpus = await loadCorpus(dir);
   const index = await chunkIndex(dir, corpus);
-  if (selected !== 'rag') {
-    for (const c of cases) for (const id of c.goldChunkSets?.flat() ?? c.goldChunks) if (!index.ids.includes(id)) throw new Error(`${c.id}: gold chunk ${id} is absent from corpus chunk index`);
-  }
-  const run: Run = { version: 1, promptTemplateVersion: PROMPT_TEMPLATE_VERSION, startedAt, answerModel: process.env.RAG_MODEL?.trim() || 'claude-opus-5-5', judgeModel: noJudge ? null : process.env.EVAL_JUDGE_MODEL?.trim() || 'claude-sonnet-5-5', corpus: { version: corpus.version, chunkCount: index.ids.length }, approaches: [] };
+  for (const c of cases) for (const id of c.goldChunkSets?.flat() ?? c.goldChunks) if (!index.ids.includes(id)) throw new Error(`${c.id}: gold chunk ${id} is absent from corpus chunk index`);
+  const run: Run = { version: 1, retrievalConfigVersion: RETRIEVAL_CONFIG_VERSION, promptTemplateVersion: PROMPT_TEMPLATE_VERSION, startedAt, answerModel: process.env.RAG_MODEL?.trim() || 'claude-opus-5-5', judgeModel: noJudge ? null : process.env.EVAL_JUDGE_MODEL?.trim() || 'claude-sonnet-5-5', corpus: { version: corpus.version, chunkCount: index.ids.length }, approaches: [] };
   if (selected !== 'rag') {
     const config = readAskConfig();
     const client = new Anthropic({ apiKey: config.apiKey, maxRetries: 0 });
@@ -54,8 +54,9 @@ async function main(args: string[]) {
     run.approaches.push(await runApproach({ approach: wholeApproach(config, client), corpus, cases, concurrency, model: config.model, judgeModel: run.judgeModel ?? '', judge: noJudge ? undefined : createJudge(client, run.judgeModel!, index.text) }));
   }
   if (selected !== 'whole') {
-    console.log('rag: not built; skipping questions for this approach.');
-    run.approaches.push(await runApproach({ corpus, cases, concurrency, model: run.answerModel, judgeModel: run.judgeModel ?? '' }));
+    const config = readAskConfig();
+    const client = new Anthropic({ apiKey: config.apiKey, maxRetries: 0 });
+    run.approaches.push(await runApproach({ approach: ragApproach(config, { corpusDir: dir, client }), corpus, cases, concurrency, model: config.model, judgeModel: run.judgeModel ?? '', judge: noJudge ? undefined : createJudge(client, run.judgeModel!, index.text) }));
   }
   console.log(`Results: ${await writeRun(options['--out'], run)}`);
 }

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { categories, type ApproachResult, type CaseResult } from './types';
 import type { countCorpus } from './corpus';
 export type Run = {
-  version: 1; promptTemplateVersion?: string; startedAt: string; answerModel: string; judgeModel: string | null;
+  version: 1; promptTemplateVersion?: string; retrievalConfigVersion?: string; startedAt: string; answerModel: string; judgeModel: string | null;
   corpus: { version: string; chunkCount: number; tokens?: Awaited<ReturnType<typeof countCorpus>>; tokenError?: string };
   approaches: ApproachResult[];
 };
@@ -17,6 +17,7 @@ export function summarize(a: ApproachResult) {
     rows.some(r => r[key] == null || (key === 'answerDollars' ? r.answerCostIncomplete : r.judgeCostIncomplete)) ? null : rows.reduce((s, r) => s + r[key]!, 0);
   const answerDollars = sumCost('answerDollars');
   const judgeDollars = sumCost('judgeDollars');
+  const retrievalDollars = a.cases.some(r => r.retrievalCostIncomplete || r.retrievalDollars === null) ? null : a.cases.reduce((s, r) => s + (r.retrievalKnownDollars ?? r.retrievalDollars ?? 0), 0);
   const eligibleAnswerDollars = sumCost('answerDollars', scored);
   const eligibleJudgeDollars = sumCost('judgeDollars', scored);
   const usage = a.cases.flatMap(r => r.answer ? [r.answer.usage] : r.answerUsage ? [r.answerUsage] : []);
@@ -33,11 +34,12 @@ export function summarize(a: ApproachResult) {
       return [category, { eligible: rows.length, passing: rows.filter(r => r.status === 'pass').length,
         passRate: rows.length && rows.every(r => r.status !== 'unjudged') ? rows.filter(r => r.status === 'pass').length / rows.length : null }];
     })),
+    effectiveApproaches: Object.fromEntries(['rag', 'whole', 'deterministic'].map(kind => [kind, { answers: a.cases.filter(r => r.answer?.effectiveApproach === kind).length, passing: scored.filter(r => r.answer?.effectiveApproach === kind && r.status === 'pass').length }])),
     leakFailures: a.cases.filter(r => r.status === 'leak-failure').map(r => r.case.id),
-    answerDollars, judgeDollars, totalDollars: answerDollars === null || judgeDollars === null ? null : answerDollars + judgeDollars,
-    costIncomplete: answerDollars === null || judgeDollars === null,
-    knownDollars: a.cases.reduce((s, r) => s + (r.answerDollars ?? 0) + (r.judgeDollars ?? 0), 0),
-    dollarsPerPassingAnswer: passing && eligibleAnswerDollars !== null && eligibleJudgeDollars !== null ? (eligibleAnswerDollars + eligibleJudgeDollars) / passing : null,
+    answerDollars, judgeDollars, retrievalDollars, totalDollars: answerDollars === null || judgeDollars === null || retrievalDollars === null ? null : answerDollars + judgeDollars + retrievalDollars,
+    costIncomplete: answerDollars === null || judgeDollars === null || retrievalDollars === null,
+    knownDollars: a.cases.reduce((s, r) => s + (r.answerDollars ?? 0) + (r.judgeDollars ?? 0) + (r.retrievalKnownDollars ?? r.retrievalDollars ?? 0), 0),
+    dollarsPerPassingAnswer: passing && eligibleAnswerDollars !== null && eligibleJudgeDollars !== null && retrievalDollars !== null ? (eligibleAnswerDollars + eligibleJudgeDollars + scored.reduce((s, r) => s + (r.retrievalKnownDollars ?? r.retrievalDollars ?? 0), 0)) / passing : null,
     cacheHitRate: a.name === 'whole' && input ? usage.reduce((s, u) => s + (u.cache_read_input_tokens ?? 0), 0) / input : null,
     speeds,
   };
@@ -49,7 +51,8 @@ export function report(run: Run): string {
   const pressure = t === undefined ? 'unavailable' : t < 50000 ? '<50k: fine' : t < 100000 ? '50–100k: monitor' : t <= 200000 ? '100–200k: strains' : t < 500000 ? '200–500k: beyond strain range' : '500k+: RAG required';
   const lines = [`# CV-AI evaluation — ${run.startedAt}`, '', `Corpus: ${run.corpus.version}; chunks: ${run.corpus.chunkCount}.`,
     `Answer model: ${run.answerModel}; judge: ${run.judgeModel ?? 'disabled'}.`,
-    `Prompt template: ${run.promptTemplateVersion ?? run.corpus.tokens?.promptTemplateVersion ?? 'historical/unrecorded'}.`, '',
+    `Prompt template: ${run.promptTemplateVersion ?? run.corpus.tokens?.promptTemplateVersion ?? 'historical/unrecorded'}.`,
+    `Retrieval configuration: ${run.retrievalConfigVersion ?? 'historical/unrecorded'}.`, '',
     `Exact prompt tokens: ${t ?? 'unavailable'} — ${pressure}.`, run.corpus.tokens?.note ?? (run.corpus.tokenError ? `Token counting error: ${run.corpus.tokenError}` : 'Token counting skipped: no built approach selected.'), '',
     '| Corpus part | API tokens |', '| --- | ---: |', ...Object.entries(run.corpus.tokens?.parts ?? {}).map(([k, v]) => `| ${k} | ${v} |`), ''];
   for (const a of run.approaches) {
@@ -60,11 +63,12 @@ export function report(run: Run): string {
       '| Category | Pass / eligible | Rate |', '| --- | ---: | ---: |',
       ...Object.entries(s.categories).map(([k, v]) => `| ${k} | ${v.passing}/${v.eligible} | ${pct(v.passRate)} |`), '',
       `Leak failures: ${s.leakFailures.join(', ') || 'none'}.`, '',
+      ...(a.name === 'rag' ? [`Effective answer paths (fallback successes are separate): ${JSON.stringify(s.effectiveApproaches)}.`, ''] : []),
       '| Cost / operation | Value |', '| --- | ---: |',
-      ...Object.entries({ answerDollars: s.answerDollars, judgeDollars: s.judgeDollars, totalDollars: s.totalDollars, costIncomplete: s.costIncomplete, knownDollars: s.knownDollars, dollarsPerPassingAnswer: s.dollarsPerPassingAnswer, embeddingDollars: a.embeddingDollars, cacheHitRate: pct(s.cacheHitRate), indexFreshness: a.indexFreshness }).map(([k, v]) => `| ${k} | ${cell(v)} |`), '',
+      ...Object.entries({ answerDollars: s.answerDollars, retrievalDollars: s.retrievalDollars, judgeDollars: s.judgeDollars, totalDollars: s.totalDollars, costIncomplete: s.costIncomplete, knownDollars: s.knownDollars, dollarsPerPassingAnswer: s.dollarsPerPassingAnswer, embeddingDollars: a.embeddingDollars, cacheHitRate: pct(s.cacheHitRate), indexFreshness: a.indexFreshness }).map(([k, v]) => `| ${k} | ${cell(v)} |`), '',
       '| Cache state | Questions | Mean first token ms | Mean total ms |', '| --- | ---: | ---: | ---: |',
       ...Object.entries(s.speeds).map(([k, v]) => `| ${k} | ${v.count} | ${cell(v.firstTokenMs)} | ${cell(v.totalMs)} |`), '',
-      ...(s.speeds.cold.count === 0 ? ['Every question hit a warm cache; no cold timing was measured.', ''] : []),
+      ...(s.speeds.cold.count === 0 ? ['No cache-write response was observed; no cold-cache timing was measured.', ''] : []),
       '| Case | Input uncached | Cache write | Cache read | Output | Answer $ | Judge $ |', '| --- | ---: | ---: | ---: | ---: | ---: | ---: |');
     for (const r of a.cases) {
       const u = r.answer?.usage ?? r.answerUsage;
@@ -98,6 +102,6 @@ export async function writeRun(out: string, run: Run): Promise<string> {
   const summaries = run.approaches.map(a => ({ name: a.name, status: a.status, ...summarize(a) }));
   await writeFile(path.join(dir, 'results.json'), JSON.stringify({ ...run, summaries }, null, 2) + '\n');
   await writeFile(path.join(dir, 'report.md'), report(run));
-  await appendFile(path.join(out, 'runs.jsonl'), JSON.stringify({ startedAt: run.startedAt, corpusVersion: run.corpus.version, promptTemplateVersion: run.promptTemplateVersion, answerModel: run.answerModel, judgeModel: run.judgeModel, dir, summaries }) + '\n');
+  await appendFile(path.join(out, 'runs.jsonl'), JSON.stringify({ startedAt: run.startedAt, corpusVersion: run.corpus.version, promptTemplateVersion: run.promptTemplateVersion, retrievalConfigVersion: run.retrievalConfigVersion, answerModel: run.answerModel, judgeModel: run.judgeModel, dir, summaries }) + '\n');
   return dir;
 }

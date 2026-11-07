@@ -47,10 +47,11 @@ describe('retrieval readiness', () => {
     await f.put(f.sourceDir, 'bot-export.json', JSON.stringify({ ...f.exported, chunks: f.index.units.filter(u => u.kind === 'entry').map(u => ({ id: u.id, title: u.title, file: u.document, hash: u.exporterHash })) }));
     expect((await inspectRetrievalIndex(f.dir, f.corpus)).status).toBe('ready');
   });
-  it('keeps serving mode whole until the runner is integrated', () => {
+  it('defaults to whole and accepts only explicit supported modes', () => {
     try {
       vi.stubEnv('CVAI_APPROACH', 'whole'); expect(configuredApproach()).toBe('whole');
-      vi.stubEnv('CVAI_APPROACH', 'rag'); expect(() => configuredApproach()).toThrow();
+      vi.stubEnv('CVAI_APPROACH', undefined); expect(configuredApproach()).toBe('whole');
+      vi.stubEnv('CVAI_APPROACH', 'rag'); expect(configuredApproach()).toBe('rag');
       vi.stubEnv('CVAI_APPROACH', 'typo'); expect(() => configuredApproach()).toThrow();
     } finally { vi.unstubAllEnvs(); }
   });

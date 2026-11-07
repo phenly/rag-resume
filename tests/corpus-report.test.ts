@@ -7,7 +7,7 @@ import { corpusSnapshot } from "@/lib/corpus-version";
 import { diffSnapshots, type Snapshot } from "@/scripts/corpus-report";
 import { corpusFixture } from "./fixtures/corpus";
 
-const metadata = (version = 'source-version', indexVersion = 'a'.repeat(64)) => ({ version, approach: 'whole', retrieval: { status: 'ready', corpusVersion: version, indexVersion, schemaVersion: 1, embeddingModel: 'voyage-4-large', dimensions: 1024 } });
+const metadata = (version = 'source-version', indexVersion = 'a'.repeat(64)) => ({ version, approach: 'whole', retrievalConfigVersion: 'c'.repeat(64), retrieval: { status: 'ready', corpusVersion: version, indexVersion, schemaVersion: 1, embeddingModel: 'voyage-4-large', dimensions: 1024 } });
 
 const snapshot = (changes: Partial<Snapshot> = {}): Snapshot => ({
   version: "version-one",

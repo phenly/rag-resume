@@ -28,6 +28,14 @@ export function grade(c: EvalCase, answer: Answer, judge?: JudgeOutput): Pick<Ca
     ...(answer.droppedByRerank ? { droppedByRerank: answer.droppedByRerank } : {}),
   } } : {}) };
 }
+/** Unknown interrupted provider usage remains unknown rather than free. */
+export function retrievalCost(trace: Answer['retrievalTrace']): { dollars: number | null; knownDollars: number; incomplete: boolean } {
+  if (!trace) return { dollars: 0, knownDollars: 0, incomplete: false };
+  const receipts = [...(trace.embedding ? [trace.embedding] : []), ...(trace.rerank?.calls ?? [])];
+  const incomplete = receipts.some(receipt => receipt.status !== 'complete');
+  const knownDollars = receipts.reduce((sum, receipt) => sum + (receipt.status === 'complete' ? receipt.costUsd : 0), 0);
+  return { dollars: incomplete ? null : knownDollars, knownDollars, incomplete };
+}
 export async function runApproach(options: { approach?: Approach; corpus: Corpus; cases: EvalCase[]; concurrency: number; model: string; judgeModel: string; judge?: Judge }): Promise<ApproachResult> {
   const { approach, corpus, cases, model, judgeModel, judge } = options;
   if (!approach) return { name: 'rag', status: 'not built', cases: [], indexFreshness: null, embeddingDollars: null };
@@ -39,12 +47,21 @@ export async function runApproach(options: { approach?: Approach; corpus: Corpus
     results[index] = result;
     try {
       result.answer = await approach!.answer(c.question);
-      result.answerDollars = dollars(model, result.answer.usage);
+      const retrieval = retrievalCost(result.answer.retrievalTrace);
+      result.retrievalDollars = retrieval.dollars;
+      result.retrievalKnownDollars = retrieval.knownDollars;
+      result.retrievalCostIncomplete = retrieval.incomplete;
+      result.answerDollars = result.answer.effectiveApproach === 'deterministic' ? 0 : dollars(model, result.answer.usage);
       result.answerCostIncomplete = !!result.answer.usageIncomplete;
       Object.assign(result, grade(c, result.answer));
     } catch (e) {
       result.error = String(e);
-      const failure = e as { usage?: Usage; timings?: Answer['timings']; usageIncomplete?: boolean };
+      const failure = e as { usage?: Usage; timings?: Answer['timings']; usageIncomplete?: boolean; retrievalTrace?: Answer['retrievalTrace'] };
+      result.retrievalTrace = failure.retrievalTrace;
+      const retrieval = retrievalCost(failure.retrievalTrace);
+      result.retrievalDollars = retrieval.dollars;
+      result.retrievalKnownDollars = retrieval.knownDollars;
+      result.retrievalCostIncomplete = retrieval.incomplete;
       result.answerUsage = failure.usage;
       result.answerTimings = failure.timings;
       result.answerDollars = failure.usage ? dollars(model, failure.usage) : null;
@@ -75,5 +92,7 @@ export async function runApproach(options: { approach?: Approach; corpus: Corpus
   await Promise.all(Array.from({ length: Math.min(options.concurrency, Math.max(0, cases.length - 1)) }, async () => {
     while (next < cases.length) await run(next++);
   }));
-  return { name: approach.name, status: 'complete', cases: results, indexFreshness: null, embeddingDollars: approach.name === 'whole' ? 0 : null };
+  const traces = results.flatMap(result => (result.answer?.retrievalTrace ?? result.retrievalTrace) ? [result.answer?.retrievalTrace ?? result.retrievalTrace!] : []);
+  const embeddings = traces.flatMap(trace => trace.embedding ? [trace.embedding] : []);
+  return { name: approach.name, status: 'complete', cases: results, indexFreshness: approach.name === 'whole' ? null : traces.length && traces.every(trace => trace.indexVersion) ? 'matching' : 'unavailable', embeddingDollars: embeddings.some(item => item.status !== 'complete') ? null : embeddings.reduce((sum, item) => sum + (item.status === 'complete' ? item.costUsd : 0), 0) };
 }

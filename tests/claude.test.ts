@@ -114,6 +114,7 @@ describe("streamAnswer", () => {
       { type: "error", message: "The answer was cut off. Try again." },
     ]);
     expect(JSON.stringify(out)).not.toContain("secret");
+    expect(spy).toHaveBeenCalledWith("[ask] stream failed");
     spy.mockRestore();
   });
 });

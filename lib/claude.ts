@@ -94,10 +94,10 @@ export async function* streamAnswer(
     else if (msg.stop_reason === "end_turn" || msg.stop_reason === "stop_sequence")
       yield { type: "done", status: "complete" };
     else yield { type: "done", status: "incomplete" };
-  } catch (err) {
+  } catch {
     finished = true; // abort below only matters if the client left
     if (signal?.aborted) return; // client left; nobody is listening
-    console.error("[ask] stream failed:", err);
+    console.error("[ask] stream failed");
     yield { type: "error", message: CUT_OFF };
   } finally {
     signal?.removeEventListener("abort", onAbort);

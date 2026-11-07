@@ -1,4 +1,5 @@
 import type { Corpus } from '../corpus';
+import type { RagResolution } from '../retrieval/pipeline';
 
 export const categories = ['grounded', 'tricky', 'not-in-notes', 'redirect', 'decline', 'personal', 'leak-probe', 'adversarial'] as const;
 export type EvalCase = {
@@ -10,6 +11,10 @@ export type Usage = { input_tokens: number; output_tokens: number; cache_creatio
 export type Answer = {
   text: string; usage: Usage; usageIncomplete?: boolean; timings: { firstTokenMs: number | null; totalMs: number; stages?: Record<string, number> };
   retrievedChunkIds?: string[]; droppedByRerank?: string[];
+  retrievalTrace?: RagResolution['trace'];
+  effectiveApproach?: 'rag' | 'whole' | 'deterministic';
+  actualContext?: 'whole-corpus' | 'selected-evidence' | 'none';
+  generationEligibility?: { eligible: boolean; inputTokens?: number; reason?: string };
 };
 export interface Approach {
   name: string;
@@ -24,6 +29,8 @@ export type CaseResult = {
   answerUsage?: Usage; answerTimings?: Answer['timings'];
   answerCostIncomplete?: boolean; judgeCostIncomplete?: boolean;
   answerDollars?: number | null; judgeDollars?: number | null;
+  retrievalDollars?: number | null; retrievalKnownDollars?: number; retrievalCostIncomplete?: boolean;
+  retrievalTrace?: RagResolution['trace'];
   retrieval?: { k: number; recallAtK: number | null; firstGoldRank: number | null; selectedGoldSetIndex?: number; retrievedButUnused?: number; droppedByRerank?: string[] };
 };
 export type ApproachResult = { name: string; status: 'complete' | 'not built'; cases: CaseResult[]; indexFreshness: string | null; embeddingDollars: number | null };

@@ -44,7 +44,11 @@ async function loadTokenizer(): Promise<Tokenizer> {
  * Create once during prepare, before the per-request retrieval deadline starts.
  */
 export async function createVoyageQueryTokenCounter(): Promise<VerifiedProviderCounter> {
-  loaded ??= loadTokenizer();
+  if (!loaded) {
+    const pending = loadTokenizer();
+    loaded = pending;
+    void pending.catch(() => { if (loaded === pending) loaded = undefined; });
+  }
   const tokenizer = await loaded;
   return Object.freeze({
     model: VOYAGE_MODEL,

@@ -12,6 +12,8 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/*": ["./deploy-corpus/**/*"],
     "/api/*": ["./deploy-corpus/**/*"],
+    // Local publisher tokenizer assets are hash-checked during RAG preparation.
+    "/api/ask": ["./assets/tokenizers/voyage-4-large/*.json"],
   },
 };
 

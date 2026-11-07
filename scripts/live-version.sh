@@ -45,10 +45,10 @@ try {
     throw new Error();
   if (process.argv[1] === "--json") {
     const r = body.retrieval;
-    if (body.approach !== "whole" || !r || r.status !== "ready" || r.corpusVersion !== body.version ||
+    if (body.approach !== "whole" || !/^[a-f0-9]{64}$/.test(body.retrievalConfigVersion) || !r || r.status !== "ready" || r.corpusVersion !== body.version ||
       !/^[a-f0-9]{64}$/.test(r.indexVersion) || r.schemaVersion !== 1 ||
       typeof r.embeddingModel !== "string" || !Number.isSafeInteger(r.dimensions) || r.dimensions <= 0) throw new Error();
-    console.log(JSON.stringify({ version: body.version, approach: body.approach, retrieval: {
+    console.log(JSON.stringify({ version: body.version, approach: body.approach, retrievalConfigVersion: body.retrievalConfigVersion, retrieval: {
       status: r.status, corpusVersion: r.corpusVersion, indexVersion: r.indexVersion,
       schemaVersion: r.schemaVersion, embeddingModel: r.embeddingModel, dimensions: r.dimensions
     } }));

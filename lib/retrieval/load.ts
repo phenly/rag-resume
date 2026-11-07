@@ -45,11 +45,11 @@ export async function requireFreshRetrievalIndex(dir: string, corpus?: Corpus): 
   return state.index;
 }
 
-/** Only implemented serving mode is whole; promotion is a separate integration step. */
-export function configuredApproach(): 'whole' {
+/** Whole remains the default; selecting rag is an explicit operator decision. */
+export function configuredApproach(): 'whole' | 'rag' {
   const value = process.env.CVAI_APPROACH ?? 'whole';
-  if (value !== 'whole') throw new Error('CVAI_APPROACH must remain whole until RAG serving is implemented');
-  return 'whole';
+  if (value !== 'whole' && value !== 'rag') throw new Error('CVAI_APPROACH must be whole or rag');
+  return value;
 }
 
 export function retrievalMetadata(state: RetrievalState) {

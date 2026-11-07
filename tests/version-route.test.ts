@@ -23,7 +23,7 @@ describe("GET /api/version", () => {
     const response = await GET(request());
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(await response.json()).toEqual({ version: expected.version, approach: 'whole', retrieval: { status: 'missing' } });
+    expect(await response.json()).toEqual({ version: expected.version, approach: 'whole', retrievalConfigVersion: expect.stringMatching(/^[a-f0-9]{64}$/), retrieval: { status: 'missing' } });
     expect(expected.version).toMatch(/^[a-f0-9]{64}$/);
   });
 

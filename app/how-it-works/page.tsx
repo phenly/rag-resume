@@ -6,16 +6,14 @@ export const metadata: Metadata = { title: "How CV-AI works" };
 
 const boxes = [
   { title: "1. Your question", note: "Typed in the browser" },
-  { title: "2. The server", note: "Adds the career archive and the answer rules" },
-  { title: "3. Claude", note: "Reads the archive and writes an answer" },
+  { title: "2. The server", note: "Chooses career evidence and adds answer rules" },
+  { title: "3. Claude", note: "Reads career evidence and writes an answer" },
   { title: "4. Streamed answer", note: "Appears word by word, with its sources" },
 ];
 
 const next = [
-  { title: "Search over embeddings", text: "Instead of giving Claude the whole archive every time, find and send only the most relevant passages." },
   { title: "Guardrails", text: "Stronger, tested checks that keep private or off-topic material out of answers." },
   { title: "A question log", text: "Record which questions people ask so the archive can fill the gaps." },
-  { title: "Evaluation", text: "A repeatable set of questions that scores answer quality whenever something changes." },
 ];
 
 export default function HowItWorks() {
@@ -34,7 +32,7 @@ export default function HowItWorks() {
           className={styles.diagram}
           viewBox="0 0 760 130"
           role="img"
-          aria-label="Flow diagram: your question goes to the server, which sends it with the career archive and answer rules to Claude, and the answer streams back."
+          aria-label="Flow diagram: your question goes to the server, which selects career evidence and sends it with answer rules to Claude, and the answer streams back."
         >
           <defs>
             <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -59,11 +57,24 @@ export default function HowItWorks() {
         </svg>
 
         <ol className={styles.steps}>
-          <li>Your question is sent to the server running on this computer.</li>
-          <li>The server attaches the whole career archive, kept in a reusable cache so repeat questions are fast and cheap, plus the rules the answer must follow.</li>
-          <li>Claude reads the archive and writes an answer, staying inside what the archive says.</li>
+          <li>Your question is sent to the server hosting CV-AI.</li>
+          <li>The server supplies career evidence and answer rules. It can use the whole archive or search for relevant passages. If search cannot provide enough evidence, it can use the whole archive when it fits.</li>
+          <li>Claude reads the supplied evidence and writes an answer. Some private or out-of-scope questions receive a short prepared response.</li>
           <li>The answer streams back to you as it is written, followed by a short note on which material it used.</li>
         </ol>
+
+        <h2>Your questions and privacy</h2>
+        <p>
+          Anthropic (Claude) receives your question, accepted conversation history, and the career evidence used
+          to answer. When search is enabled, Voyage AI receives your question and a limited amount of recent
+          conversation context to find relevant material. TypeSafe receives the question, that context,
+          candidate passages, and answer rules to check relevance and whether there is enough evidence.
+          Voyage AI also processes exported career passages when the search index is built.
+        </p>
+        <p>
+          Please avoid sharing confidential or sensitive information in your questions. These services process
+          the text under their account terms; CV-AI does not promise that they immediately delete it.
+        </p>
 
         <h2>What to keep in mind</h2>
         <p>

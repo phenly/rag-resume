@@ -160,6 +160,7 @@ it('reports rag as not built and writes JSON, markdown, and append-only trends',
   expect(report(run)).toContain('rag — not built');
   expect(report(run)).toContain('Prompt template: historical/unrecorded.');
   run.promptTemplateVersion = PROMPT_TEMPLATE_VERSION;
+  run.retrievalConfigVersion = 'a'.repeat(64);
   expect(report(run)).toContain(`Prompt template: ${PROMPT_TEMPLATE_VERSION}.`);
   const out = await mkdtemp(path.join(os.tmpdir(), 'eval-test-'));
   try {
@@ -168,8 +169,9 @@ it('reports rag as not built and writes JSON, markdown, and append-only trends',
     const saved = JSON.parse(await readFile(path.join(dir, 'results.json'), 'utf8'));
     expect(saved.approaches[0].status).toBe('not built');
     expect(saved.promptTemplateVersion).toBe(PROMPT_TEMPLATE_VERSION);
+    expect(saved.retrievalConfigVersion).toBe(run.retrievalConfigVersion);
     const trends = (await readFile(path.join(out, 'runs.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
-    expect(trends.every(row => row.promptTemplateVersion === PROMPT_TEMPLATE_VERSION)).toBe(true);
+    expect(trends.every(row => row.promptTemplateVersion === PROMPT_TEMPLATE_VERSION && row.retrievalConfigVersion === run.retrievalConfigVersion)).toBe(true);
     expect((await readFile(path.join(out, 'runs.jsonl'), 'utf8')).trim().split('\n')).toHaveLength(2);
   } finally { await rm(out, { recursive: true, force: true }); }
 });
@@ -225,9 +227,9 @@ it('uses eligible answer and judge spend per pass and reports all-case operation
 it('notes when every question was warm and no cold timing was measured', () => {
   const warm = { ...answer, usage: { ...answer.usage, cache_creation_input_tokens: 0 } };
   const run: Run = { version: 1, startedAt: '2026-11-03', answerModel: 'fictional', judgeModel: null, corpus: { version: 'fictional', chunkCount: 1 }, approaches: [{ name: 'whole', status: 'complete', cases: [{ case: c, status: 'unjudged', answer: warm }], indexFreshness: null, embeddingDollars: 0 }] };
-  expect(report(run)).toContain('Every question hit a warm cache; no cold timing was measured.');
+  expect(report(run)).toContain('No cache-write response was observed; no cold-cache timing was measured.');
   run.approaches[0].cases[0].answer = answer;
-  expect(report(run)).not.toContain('Every question hit a warm cache');
+  expect(report(run)).not.toContain('No cache-write response was observed');
 });
 
 const evalModels = { model: 'claude-opus-5-5', judgeModel: 'claude-sonnet-5-5' };
