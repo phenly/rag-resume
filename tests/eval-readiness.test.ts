@@ -162,3 +162,24 @@ it('retains an in-flight regex leak when quota cancels its judge and excludes qu
   expect(result.cases[2].judge).toBeUndefined();
   expect(summarize(result)).toMatchObject({ leakFailures: ['LEAK'], fallback: { count: 3, attempted: 3, frequency: 1 }, comparisonValid: false, passRate: null });
 });
+
+
+it('wide stage recall credits gold found only in always-supplied units', () => {
+  const trace = { strategy: 'wide' as const, retrievalConfigVersion: 'fictional-wide', elapsedMs: 1, stages: {},
+    search: { dense: [{ id: 'OTHER', score: 1 }], lexical: [], fused: [] },
+    wide: { alwaysIds: ['C'], retrievedIds: ['OTHER'], droppedIds: [], evidenceBytes: 100, overviewPresent: true } };
+  const result = grade(c, { ...answer, retrievedChunkIds: ['C', 'OTHER'], retrievalTrace: trace });
+  expect(result.retrievalStages).toEqual({ dense: { k: 1, recallAtK: 0, firstGoldRank: null, selectedGoldSetIndex: 0 }, lexical: { k: 0, recallAtK: 0, firstGoldRank: null, selectedGoldSetIndex: 0 }, always: { k: 1, recallAtK: 1, firstGoldRank: 1, selectedGoldSetIndex: 1 }, supplied: { k: 2, recallAtK: 1, firstGoldRank: 1, selectedGoldSetIndex: 1 } });
+});
+it('wide loss attribution uses non-always rank and the best complete gold option with first ties', () => {
+  const dense = Array.from({ length: 50 }, (_, i) => ({ id: `X${i + 1}`, score: 1 / (i + 1) }));
+  const trace = { strategy: 'wide' as const, retrievalConfigVersion: 'fictional-wide', elapsedMs: 1, stages: {}, search: { dense: [{ id: 'ALWAYS', score: 2 }, ...dense], lexical: dense.slice(0, 24), fused: [] },
+    wide: { alwaysIds: ['ALWAYS'], retrievedIds: ['X1'], droppedIds: ['X40'], evidenceBytes: 100, overviewPresent: true } };
+  const supplied = { ...answer, retrievedChunkIds: ['ALWAYS', 'X1'], retrievalTrace: trace };
+  const testcase = { ...c, goldChunks: [], goldChunkSets: [['ALWAYS', 'X40', 'X50'], ['X1', 'X41', 'X49']] };
+  const result = grade(testcase, supplied);
+  expect(result.retrievalStages?.supplied).toMatchObject({ recallAtK: 1 / 3, selectedGoldSetIndex: 0 });
+  expect(result.retrievalLosses).toEqual({ 'pack-budget': ['X40'], 'not-retrieved': ['X50'] });
+  expect(grade({ ...testcase, goldChunkSets: [['X50'], ['ALWAYS', 'X40']] }, supplied).retrievalLosses).toEqual({ 'pack-budget': ['X40'], 'not-retrieved': [] });
+  expect(grade({ ...testcase, goldChunkSets: undefined, goldChunks: ['X40'] }, supplied).retrievalLosses).toEqual({ 'pack-budget': ['X40'], 'not-retrieved': [] });
+});

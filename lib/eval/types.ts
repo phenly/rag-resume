@@ -1,3 +1,4 @@
+import type { RetrievalStrategy } from '../retrieval/load';
 import type { Corpus } from '../corpus';
 import type { RagResolution } from '../retrieval/pipeline';
 
@@ -17,11 +18,12 @@ export type Answer = {
   resolvedModel?: string;
   resolvedModels?: string[];
   retrievalTrace?: RagResolution['trace'];
-  effectiveApproach?: 'rag' | 'whole' | 'deterministic';
-  actualContext?: 'whole-corpus' | 'selected-evidence' | 'none';
+  effectiveApproach?: 'rag' | 'whole' | 'deterministic' | 'unavailable';
+  actualContext?: 'whole-corpus' | 'selected-evidence' | 'wide-evidence' | 'none';
   generationEligibility?: { eligible: boolean; inputTokens?: number; reason?: string };
 };
 export interface Approach {
+  strategy?: RetrievalStrategy;
   name: string;
   prepare(corpus: Corpus): Promise<void>;
   answer(question: string, history?: readonly { question: string; answer: string }[]): Promise<Answer>;
@@ -38,8 +40,8 @@ export type CaseResult = {
   answerDollars?: number | null; judgeDollars?: number | null;
   retrievalDollars?: number | null; retrievalKnownDollars?: number; retrievalCostIncomplete?: boolean;
   retrievalTrace?: RagResolution['trace'];
-  retrievalLosses?: Partial<Record<'relevance' | 'top-eight' | 'token-budget', string[]>>;
-  retrievalStages?: Partial<Record<'dense' | 'lexical' | 'fused' | 'filtered' | 'reranked' | 'selected', RetrievalMetrics>>;
+  retrievalLosses?: Partial<Record<'relevance' | 'top-eight' | 'token-budget' | 'not-retrieved' | 'pack-budget', string[]>>;
+  retrievalStages?: Partial<Record<'dense' | 'lexical' | 'fused' | 'filtered' | 'reranked' | 'selected' | 'always' | 'supplied', RetrievalMetrics>>;
   retrieval?: { k: number; recallAtK: number | null; firstGoldRank: number | null; selectedGoldSetIndex?: number; retrievedButUnused?: number; droppedByRerank?: string[] };
 };
-export type ApproachResult = { name: string; status: 'complete' | 'not built' | 'incomplete'; incompleteReason?: string; cases: CaseResult[]; indexFreshness: string | null; embeddingDollars: number | null };
+export type ApproachResult = { strategy?: RetrievalStrategy; name: string; status: 'complete' | 'not built' | 'incomplete'; incompleteReason?: string; cases: CaseResult[]; indexFreshness: string | null; embeddingDollars: number | null };

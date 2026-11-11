@@ -282,3 +282,18 @@ it('keeps judge retry usage and marks missing retry usage incomplete', async () 
   expect(a.cases[0].judgeUsage).toEqual({ input_tokens: 110, output_tokens: 52, cache_creation_input_tokens: 200, cache_read_input_tokens: 300 });
   expect(summarize(a)).toMatchObject({ totalDollars: null, costIncomplete: true, dollarsPerPassingAnswer: null });
 });
+
+
+it.each(['complete', 'usage-unknown'] as const)('runner continues after first wide unavailable with %s retrieval usage', async receiptStatus => {
+  const retrievalTrace = { strategy: 'wide' as const, retrievalConfigVersion: 'fictional-wide', elapsedMs: 7, stages: {}, embedding: receiptStatus === 'complete' ? { status: 'complete' as const, inputTokens: 100, costUsd: .01 } : { status: 'usage-unknown' as const } };
+  const unavailable: Answer = { text: "I can't answer that right now. Please try again shortly.", effectiveApproach: 'unavailable', actualContext: 'none', suppliedEvidence: '', retrievedChunkIds: [], generationEligibility: { eligible: false, reason: 'retrieval-timeout' }, usage: { input_tokens: 0, output_tokens: 0 }, timings: { firstTokenMs: null, totalMs: 7 }, retrievalTrace };
+  const respond = vi.fn().mockResolvedValueOnce(unavailable).mockResolvedValueOnce({ ...answer, resolvedModel: evalModels.model, effectiveApproach: 'rag', actualContext: 'wide-evidence' });
+  const judgeCall = vi.fn(async () => ({ output: judge, usage: answer.usage }));
+  const result = await runApproach({ corpus: await corpus(), cases: [c, { ...c, id: 'LATER' }], concurrency: 2, ...evalModels, approach: { name: 'rag', strategy: 'wide', prepare: async () => {}, answer: respond }, judge: judgeCall });
+  expect(result).toMatchObject({ name: 'rag', strategy: 'wide', status: 'incomplete', incompleteReason: 'wide-unavailable' });
+  expect(respond).toHaveBeenCalledTimes(2); expect(judgeCall).toHaveBeenCalledOnce();
+  expect(result.cases[0]).toMatchObject({ status: 'answer-error', comparisonEligible: false, answerDollars: 0, judgeDollars: 0, answer: unavailable, retrievalDollars: receiptStatus === 'complete' ? .01 : null, retrievalKnownDollars: receiptStatus === 'complete' ? .01 : 0, retrievalCostIncomplete: receiptStatus !== 'complete' });
+  expect(result.cases[0].judge).toBeUndefined();
+  expect(result.cases[1]).toMatchObject({ status: 'pass', comparisonEligible: true });
+  expect(summarize(result)).toMatchObject({ qualityComplete: false, comparisonValid: false, passRate: null });
+});
