@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { assertNever } from '../lib/retrieval/assert-never';
 import type { RagResolution } from '../lib/retrieval/pipeline';
@@ -65,4 +66,13 @@ async function main() {
   console.log(JSON.stringify({ ready: pipeline.ready, prepareMs, prefixTokensIncludingProbe: prefixTokens,
     outcomes: rows.map(row => ({ id: row.id, kind: row.kind, reason: row.trace.fallbackReason, countMs: row.countMs, eligibility: row.eligibility })) }, null, 2));
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(() => { console.error('RAG preflight failed; inspect local configuration and connectivity.'); process.exitCode = 1; });
+export function isMainModule(moduleUrl: string, argvPath: string | undefined): boolean {
+  if (!argvPath) return false;
+  try {
+    return moduleUrl === pathToFileURL(realpathSync(argvPath)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule(import.meta.url, process.argv[1])) main().catch(() => { console.error('RAG preflight failed; inspect local configuration and connectivity.'); process.exitCode = 1; });
