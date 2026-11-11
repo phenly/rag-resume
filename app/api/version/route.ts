@@ -6,8 +6,7 @@ import { configuredApproach, configuredStrategy, inspectRetrievalIndex, retrieva
 
 import { RETRIEVAL_CONFIG_VERSION } from "@/lib/retrieval/pipeline";
 
-import { activeRetrievalConfigVersion } from "@/lib/retrieval/production";
-import { isAlwaysSupplied } from "@/lib/retrieval/wide-select";
+import { retrievalDetail } from "@/lib/retrieval/detail";
 
 export async function GET(request: Request): Promise<Response> {
   const blocked = guardLocalRequest(request);
@@ -19,12 +18,10 @@ export async function GET(request: Request): Promise<Response> {
     const state = await inspectRetrievalIndex(resolveCorpusDir(), corpus);
     let detail;
     if (new URL(request.url).searchParams.get("detail") === "1") {
-      const strategy = configuredStrategy();
-      const always = state.status === 'ready' && state.index
-        ? state.index.units.filter(isAlwaysSupplied) : null;
-      detail = { strategy, retrievalConfigVersion: activeRetrievalConfigVersion(strategy),
-        alwaysSuppliedCount: always?.length ?? null,
-        overviewPresent: always?.some(unit => unit.kind === 'entry' && unit.document === 'Career Overview') ?? null };
+      detail = retrievalDetail({
+        strategy: configuredStrategy(),
+        index: state.status === 'ready' ? state.index ?? null : null,
+      });
     }
     return Response.json({ version: corpus.version, approach, retrievalConfigVersion: RETRIEVAL_CONFIG_VERSION, retrieval: retrievalMetadata(state), ...(detail ? { detail } : {}) }, { headers });
   } catch (err) {
