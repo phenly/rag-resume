@@ -3,23 +3,24 @@ import { CorpusError, resolveCorpusDir, type Corpus } from "@/lib/corpus";
 import { getCorpus } from "@/lib/corpus-cache";
 import { logServerError } from "@/lib/log";
 import { guardLocalRequest } from "@/lib/request-guard";
-import { buildSystemPrompt, buildRagSystemPrompt } from "@/lib/prompt";
+import { buildSystemPrompt, buildRagSystemPrompt, buildWideSystemPrompt } from "@/lib/prompt";
 import { ConfigError, readAskConfig, streamAnswer } from "@/lib/claude";
 import { encodeEvent, MAX_QUESTION_CHARS, type AskEvent } from "@/lib/events";
 import { historySecret, parseHistory, signTurn } from "@/lib/history";
 
-import { configuredApproach } from "@/lib/retrieval/load";
+import { configuredApproach, configuredStrategy, type RetrievalStrategy } from "@/lib/retrieval/load";
 import { prepareProductionRagPipeline, createWholeFallbackGuard, generatorContextLimit, UNAVAILABLE_ANSWER } from "@/lib/retrieval/production";
+import { requestByteBound, fitsGeneratorContext } from "@/lib/retrieval/size-guard";
 import type { AskConfig } from "@/lib/claude";
 import type { Turn } from "@/lib/history";
 
 type Prepared = Awaited<ReturnType<typeof prepareProductionRagPipeline>>;
 let ragCache: { corpus: Corpus; key: string; prepared: Promise<Prepared> } | undefined;
-function getRag(corpus: Corpus, config: AskConfig): Promise<Prepared> {
+function getRag(corpus: Corpus, config: AskConfig, strategy: RetrievalStrategy): Promise<Prepared> {
   // Credentials never enter diagnostics; changing them invalidates prepared clients.
-  const key = JSON.stringify([resolveCorpusDir(), config.model, config.apiKey, process.env.VOYAGE_API_KEY, process.env.TYPESAFE_API_KEY]);
+  const key = JSON.stringify([strategy, resolveCorpusDir(), config.model, config.apiKey, process.env.VOYAGE_API_KEY, ...(strategy === 'jev' ? [process.env.TYPESAFE_API_KEY] : [])]);
   if (ragCache?.corpus === corpus && ragCache.key === key) return ragCache.prepared;
-  const prepared = prepareProductionRagPipeline({ corpus, corpusDir: resolveCorpusDir(), config });
+  const prepared = prepareProductionRagPipeline({ corpus, corpusDir: resolveCorpusDir(), config, strategy });
   ragCache = { corpus, key, prepared };
   void prepared.then(result => { if (!result.ready && ragCache?.prepared === prepared) ragCache = undefined; }, () => { if (ragCache?.prepared === prepared) ragCache = undefined; });
   return prepared;
@@ -29,13 +30,49 @@ async function* answerEvents(question: string, corpus: Corpus, config: AskConfig
   if (signal.aborted) return;
   let system: System;
   if (configuredApproach() === 'rag') {
+    const strategy = configuredStrategy();
+    if (strategy === 'wide') {
+      let wideSystem: System | undefined;
+      try {
+        const limit = generatorContextLimit();
+        if (limit !== undefined) {
+          const prepared = await getRag(corpus, config, strategy);
+          if (signal.aborted) return;
+          const result = await prepared.resolve({ question, verifiedHistory: history, signal });
+          if (signal.aborted) return;
+          switch (result.kind) {
+            case 'cancelled': return;
+            case 'unavailable':
+            case 'route':
+            case 'fallback': break;
+            case 'evidence': {
+              const candidate = buildWideSystemPrompt(corpus, result.always ?? [], result.selected);
+              if (fitsGeneratorContext({ byteBound: requestByteBound({ system: candidate, question, history }), maxTokens: config.maxTokens, limit })) wideSystem = candidate;
+              break;
+            }
+            default: assertNever(result);
+          }
+        }
+      } catch {
+        // Wide preparation and resolution always fail closed; never build whole.
+        wideSystem = undefined;
+      }
+      if (signal.aborted) return;
+      if (!wideSystem) {
+        yield { type: 'text', text: UNAVAILABLE_ANSWER };
+        yield { type: 'done', status: 'incomplete' };
+        return;
+      }
+      yield* streamAnswer(question, wideSystem, config, undefined, signal, history);
+      return;
+    }
     if (generatorContextLimit() === undefined) {
       yield { type: 'text', text: UNAVAILABLE_ANSWER };
       yield { type: 'done', status: 'complete' };
       return;
     }
     try {
-      const prepared = await getRag(corpus, config);
+      const prepared = await getRag(corpus, config, strategy);
       if (signal.aborted) return;
       const result = await prepared.resolve({ question, verifiedHistory: history, signal });
       if (signal.aborted) return;
@@ -120,7 +157,7 @@ export async function POST(request: Request): Promise<Response> {
       return json(400, "Send a JSON body with a question.");
     }
     const config = readAskConfig();
-    configuredApproach(); // Reject invalid configuration before opening the stream.
+    if (configuredApproach() === 'rag') configuredStrategy(); // Reject invalid configuration before opening the stream.
     const cancellation = new AbortController();
     const abort = () => cancellation.abort();
     request.signal.addEventListener('abort', abort, { once: true });

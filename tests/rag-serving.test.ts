@@ -1,16 +1,18 @@
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { corpusFixture } from './fixtures/corpus';
 import { loadCorpus } from '../lib/corpus';
 import { signTurn } from '../lib/history';
 const mocks = vi.hoisted(() => ({ resolve: vi.fn(), guard: vi.fn(), generate: vi.fn(), prepare: vi.fn(), whole: vi.fn(), guardFactory: vi.fn() }));
-vi.mock('../lib/retrieval/production', () => ({
-  UNAVAILABLE_ANSWER: 'Temporarily unavailable.', generatorContextLimit: () => 20000,
+vi.mock('../lib/retrieval/production', async importOriginal => ({
+  ...await importOriginal<typeof import('../lib/retrieval/production')>(),
+  UNAVAILABLE_ANSWER: 'Temporarily unavailable.',
   prepareProductionRagPipeline: mocks.prepare, createWholeFallbackGuard: mocks.guardFactory,
 }));
 vi.mock('../lib/claude', async original => ({ ...await original<object>(), readAskConfig: () => ({ apiKey: 'fictional', model: 'fictional-model', effort: 'low', maxTokens: 1000 }), streamAnswer: mocks.generate }));
 vi.mock('../lib/prompt', async original => { const actual = await original<typeof import('../lib/prompt')>(); return { ...actual, buildSystemPrompt: mocks.whole.mockImplementation(actual.buildSystemPrompt) }; });
 beforeEach(async () => {
   vi.resetModules(); vi.clearAllMocks();
+  vi.stubEnv('RAG_GENERATOR_CONTEXT_TOKENS', '20000'); vi.stubEnv('CVAI_RETRIEVAL_STRATEGY', undefined);
   const f = await corpusFixture(); vi.stubEnv('CORPUS_DIR', f.dir); vi.stubEnv('CVAI_APPROACH', 'rag'); vi.stubEnv('HISTORY_SECRET', 'fictional-secret');
   mocks.prepare.mockResolvedValue({ ready: true, resolve: mocks.resolve });
   mocks.resolve.mockResolvedValue({ kind: 'fallback', reason: 'test', trace: {} });
@@ -68,4 +70,76 @@ it('unavailable never constructs the whole prompt or starts generation', async (
   const { POST } = await import('../app/api/ask/route'); const text = await (await POST(request({ question: 'lantern?' }))).text();
   expect(text).toContain('Temporarily unavailable.'); expect(text).toContain('"status":"incomplete"'); expect(text).not.toContain('"sig":');
   expect(mocks.whole).not.toHaveBeenCalled(); expect(mocks.guardFactory).not.toHaveBeenCalled(); expect(mocks.generate).not.toHaveBeenCalled();
+});
+
+
+describe('wide strategy', () => {
+  const unit = { id: 'FICTION-1', title: 'Lantern trial', document: 'Imaginary Studio', promptText: 'Built a fictional lantern.' };
+  beforeEach(() => {
+    vi.stubEnv('CVAI_RETRIEVAL_STRATEGY', 'wide');
+    mocks.resolve.mockResolvedValue({ kind: 'evidence', always: [{ ...unit, id: 'ALWAYS' }], selected: [unit], trace: {} });
+  });
+  it('generates from the wide prompt without counting tokens or building whole', async () => {
+    const { POST } = await import('../app/api/ask/route');
+    const text = await (await POST(request({ question: 'lantern?' }))).text();
+    expect(mocks.generate).toHaveBeenCalledOnce();
+    const system = mocks.generate.mock.calls[0][1];
+    expect(system.at(-2).text).toMatch(/^# Career context supplied with every answer/);
+    expect(system.at(-1).text).toContain(unit.promptText); expect(text).toContain('"sig":');
+    expect(mocks.whole).not.toHaveBeenCalled(); expect(mocks.guardFactory).not.toHaveBeenCalled();
+    expect(mocks.prepare.mock.calls[0][0].strategy).toBe('wide');
+  });
+  it.each(['preparation', 'resolve', 'unavailable', 'missing-limit', 'overflow', 'route', 'fallback', 'unexpected'])('fails closed unsigned for %s', async failure => {
+    if (failure === 'preparation') mocks.prepare.mockRejectedValue(new Error('fictional failure'));
+    if (failure === 'resolve') mocks.resolve.mockRejectedValue(new Error('fictional failure'));
+    if (['unavailable', 'route', 'fallback', 'unexpected'].includes(failure)) mocks.resolve.mockResolvedValue({ kind: failure, answer: 'Must not serve', reason: 'fictional', trace: {} });
+    if (failure === 'missing-limit') vi.stubEnv('RAG_GENERATOR_CONTEXT_TOKENS', undefined);
+    if (failure === 'overflow') {
+      vi.stubEnv('RAG_GENERATOR_CONTEXT_TOKENS', '3000');
+      mocks.resolve.mockResolvedValue({ kind: 'evidence', always: [], selected: [{ ...unit, promptText: 'Fictional lantern. '.repeat(1000) }], trace: {} });
+    }
+    const { POST } = await import('../app/api/ask/route');
+    const text = await (await POST(request({ question: 'lantern?' }))).text();
+    expect(text.trim().split('\n').map(line => JSON.parse(line))).toEqual([{ type: 'text', text: 'Temporarily unavailable.' }, { type: 'done', status: 'incomplete' }]);
+    expect(mocks.generate).not.toHaveBeenCalled(); expect(mocks.guardFactory).not.toHaveBeenCalled(); expect(mocks.whole).not.toHaveBeenCalled();
+  });
+  it('reuses wide preparation when the TypeSafe key changes', async () => {
+    const { POST } = await import('../app/api/ask/route');
+    await (await POST(request({ question: 'lantern?' }))).text();
+    vi.stubEnv('TYPESAFE_API_KEY', 'changed-fictional-key');
+    await (await POST(request({ question: 'cloud?' }))).text();
+    expect(mocks.prepare).toHaveBeenCalledOnce();
+  });
+  it('prepares a separate pipeline when the strategy changes', async () => {
+    const { POST } = await import('../app/api/ask/route');
+    await (await POST(request({ question: 'lantern?' }))).text();
+    vi.stubEnv('CVAI_RETRIEVAL_STRATEGY', undefined);
+    await (await POST(request({ question: 'cloud?' }))).text();
+    expect(mocks.prepare).toHaveBeenCalledTimes(2);
+    expect(mocks.prepare.mock.calls.map(([options]) => options.strategy)).toEqual(['wide', 'jev']);
+  });
+  it('starts no providers for a disconnected request', async () => {
+    const { POST } = await import('../app/api/ask/route');
+    expect(await (await POST(request({ question: 'lantern?' }, AbortSignal.abort()))).text()).toBe('');
+    expect(mocks.prepare).not.toHaveBeenCalled(); expect(mocks.generate).not.toHaveBeenCalled();
+  });
+  it('returns no events for cancelled retrieval', async () => {
+    mocks.resolve.mockResolvedValue({ kind: 'cancelled', trace: {} });
+    const { POST } = await import('../app/api/ask/route');
+    expect(await (await POST(request({ question: 'lantern?' }))).text()).toBe('');
+    expect(mocks.generate).not.toHaveBeenCalled(); expect(mocks.whole).not.toHaveBeenCalled();
+  });
+});
+it('jev still falls back to the whole prompt with the strategy unset', async () => {
+  const { POST } = await import('../app/api/ask/route');
+  const text = await (await POST(request({ question: 'widgets?' }))).text();
+  expect(mocks.whole).toHaveBeenCalledOnce(); expect(mocks.guardFactory).toHaveBeenCalledOnce(); expect(text).toContain('"sig":');
+});
+
+it('whole remains the default even when wide is configured', async () => {
+  vi.stubEnv('CVAI_APPROACH', undefined); vi.stubEnv('CVAI_RETRIEVAL_STRATEGY', 'wide');
+  const { POST } = await import('../app/api/ask/route');
+  const text = await (await POST(request({ question: 'widgets?' }))).text();
+  expect(mocks.prepare).not.toHaveBeenCalled(); expect(mocks.whole).toHaveBeenCalledOnce();
+  expect(mocks.generate).toHaveBeenCalledOnce(); expect(text).toContain('"sig":');
 });

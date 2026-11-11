@@ -3,14 +3,16 @@ import type { AskConfig } from '../claude';
 import type { Corpus } from '../corpus';
 import type { Turn } from '../history';
 import { buildSystemPrompt } from '../prompt';
-import { createVoyageEmbedder } from './voyage';
+import { createVoyageEmbedder, type Embedder } from './voyage';
 import { createJevClient } from './jev';
 import { createRetrievalTokenBudgets, createGenerationTokenBudget } from './token-budget';
 import { createVoyageQueryTokenCounter } from './voyage-tokenizer';
-import { prepareRagPipeline } from './pipeline';
+import { prepareRagPipeline, RETRIEVAL_CONFIG_VERSION, type RagPipeline } from './pipeline';
+import { prepareWidePipeline, WIDE_CONFIG_VERSION } from './pipeline-wide';
+import { configuredStrategy, type RetrievalStrategy, type inspectRetrievalIndex } from './load';
 
 export const UNAVAILABLE_ANSWER = "I can't answer that right now. Please try again shortly.";
-type Options = { corpus: Corpus; corpusDir: string; config: AskConfig; client?: Anthropic; env?: Record<string, string | undefined> };
+type Options = { corpus: Corpus; corpusDir: string; config: AskConfig; client?: Anthropic; env?: Record<string, string | undefined>; embedder?: Embedder; loadIndex?: typeof inspectRetrievalIndex };
 
 /** Operator-supplied actual generator context limit; never infer it from a model name. */
 export function generatorContextLimit(env: Record<string, string | undefined> = process.env): number | undefined {
@@ -21,20 +23,29 @@ export function generatorContextLimit(env: Record<string, string | undefined> = 
 }
 
 /** Local preparation only: no embedding, judgment, or generator count calls. */
-export async function prepareProductionRagPipeline(options: Options) {
+export async function prepareProductionRagPipeline(options: Options & { strategy?: RetrievalStrategy }): Promise<RagPipeline> {
   const env = options.env ?? process.env;
   if (generatorContextLimit(env) === undefined) throw new Error('RAG generator context limit is unconfigured');
-  const client = options.client ?? new Anthropic({ apiKey: options.config.apiKey, maxRetries: 0 });
-  const generation = createGenerationTokenBudget({ model: options.config.model, countTokens: client.beta.messages.countTokens.bind(client.beta.messages) });
+  const strategy = options.strategy ?? configuredStrategy(env);
   const voyage = await createVoyageQueryTokenCounter();
   const budgets = createRetrievalTokenBudgets({ voyage });
-  return prepareRagPipeline({
+  const shared = {
     corpus: options.corpus, corpusDir: options.corpusDir,
-    embedder: createVoyageEmbedder({ apiKey: env.VOYAGE_API_KEY ?? '', timeoutMs: 2000 }),
+    embedder: options.embedder ?? createVoyageEmbedder({ apiKey: env.VOYAGE_API_KEY ?? '', timeoutMs: 2000 }),
+    countQueryTokens: budgets.query, loadIndex: options.loadIndex,
+  };
+  if (strategy === 'wide') return prepareWidePipeline(shared);
+  const client = options.client ?? new Anthropic({ apiKey: options.config.apiKey, maxRetries: 0 });
+  const generation = createGenerationTokenBudget({ model: options.config.model, countTokens: client.beta.messages.countTokens.bind(client.beta.messages) });
+  return prepareRagPipeline({
+    ...shared,
     judge: createJevClient({ apiKey: env.TYPESAFE_API_KEY ?? '', budgetMode: 'provider-enforced', timeoutMs: 3000 }),
-    countQueryTokens: budgets.query,
     countEvidenceTokens: generation.countEvidence,
   });
+}
+
+export function activeRetrievalConfigVersion(strategy: RetrievalStrategy): string {
+  return strategy === 'wide' ? WIDE_CONFIG_VERSION : RETRIEVAL_CONFIG_VERSION;
 }
 
 export type WholeFallbackEligibility = { eligible: boolean; inputTokens?: number; reason?: 'context-limit-unconfigured' | 'context-overflow' | 'count-unavailable' | 'cancelled' };

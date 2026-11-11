@@ -5,7 +5,7 @@ import { loadCorpus } from '../lib/corpus';
 import { ragApproach } from '../lib/eval/rag';
 import { retrievalCost, runApproach } from '../lib/eval/runner';
 import { summarize } from '../lib/eval/report';
-import { createWholeFallbackGuard, generatorContextLimit } from '../lib/retrieval/production';
+import { prepareProductionRagPipeline, activeRetrievalConfigVersion, UNAVAILABLE_ANSWER, createWholeFallbackGuard, generatorContextLimit } from '../lib/retrieval/production';
 import { RETRIEVAL_CONFIG_VERSION, type RagTrace } from '../lib/retrieval/pipeline';
 import type { EvalCase } from '../lib/eval/types';
 const config = { apiKey: 'fictional', model: 'fictional', effort: 'low' as const, maxTokens: 1000 };
@@ -64,4 +64,32 @@ it('unavailable never constructs the whole prompt or starts generation', async (
     expect(answer).toMatchObject({ actualContext: 'none', generationEligibility: { eligible: false }, usage: { input_tokens: 0, output_tokens: 0 } });
     expect(whole).not.toHaveBeenCalled(); expect(stream).not.toHaveBeenCalled(); expect(countTokens).not.toHaveBeenCalled(); expect(fallbackEligible).not.toHaveBeenCalled();
   } finally { whole.mockRestore(); }
+});
+
+
+it('wide preparation succeeds without a TypeSafe key and never calls the Anthropic client', async () => {
+  const { wideRetrievalCorpusFixture, wideFixtureVector } = await import('./fixtures/wide-retrieval-corpus');
+  const { buildRetrievalIndex } = await import('../lib/retrieval/build-index');
+  const { VOYAGE_EMBEDDING_CONFIG } = await import('../lib/retrieval/voyage');
+  const { WIDE_CONFIG_VERSION } = await import('../lib/retrieval/pipeline-wide');
+  const loaded = await corpus();
+  const extraction = wideRetrievalCorpusFixture();
+  const index = await buildRetrievalIndex({ snapshot: { corpusVersion: loaded.version, extraction: { ...extraction, units: extraction.units.map(({ vector, ...unit }) => { void vector; return unit; }) } }, embedding: VOYAGE_EMBEDDING_CONFIG,
+    embedder: { embed: async texts => ({ vectors: texts.map((_, i) => wideFixtureVector(i)), inputTokens: 0 }) } });
+  const countTokens = vi.fn(); const embed = vi.fn(async () => ({ model: 'voyage-4-large' as const, dimensions: 1024 as const, vectors: [wideFixtureVector(0)], inputTokens: 10 }));
+  const pipeline = await prepareProductionRagPipeline({ corpus: loaded, corpusDir: '.', config, client: client(countTokens), env: { CVAI_RETRIEVAL_STRATEGY: 'wide', RAG_GENERATOR_CONTEXT_TOKENS: '20000' },
+    embedder: { embed }, loadIndex: async () => ({ status: 'ready', index }) });
+  expect(pipeline.ready).toBe(true);
+  expect(await pipeline.resolve({ question: 'lantern?' })).toMatchObject({ kind: 'evidence', trace: { strategy: 'wide', retrievalConfigVersion: WIDE_CONFIG_VERSION } });
+  expect(embed).toHaveBeenCalledOnce(); expect(countTokens).not.toHaveBeenCalled();
+  expect(activeRetrievalConfigVersion('wide')).toBe(WIDE_CONFIG_VERSION);
+  expect(activeRetrievalConfigVersion('jev')).toBe('738011460764090aa0079c77e14bf7d7158307482fd45cb69022d6fd90b8d758');
+  expect(UNAVAILABLE_ANSWER).toBe("I can't answer that right now. Please try again shortly.");
+});
+it('jev preparation is unchanged when the strategy is unset', async () => {
+  const countTokens = vi.fn(); const loadIndex = vi.fn(async () => ({ status: 'missing' as const }));
+  const pipeline = await prepareProductionRagPipeline({ corpus: await corpus(), corpusDir: '.', config, client: client(countTokens),
+    env: { RAG_GENERATOR_CONTEXT_TOKENS: '20000', VOYAGE_API_KEY: 'fictional', TYPESAFE_API_KEY: 'fictional' }, loadIndex });
+  expect(await pipeline.resolve({ question: 'widgets?' })).toMatchObject({ kind: 'fallback', reason: 'index-missing', trace: { retrievalConfigVersion: RETRIEVAL_CONFIG_VERSION } });
+  expect(loadIndex).toHaveBeenCalledOnce(); expect(countTokens).not.toHaveBeenCalled();
 });

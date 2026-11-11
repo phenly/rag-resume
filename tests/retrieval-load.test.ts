@@ -5,7 +5,7 @@ import { corpusFixture } from './fixtures/corpus';
 import { loadCorpus } from '../lib/corpus';
 import { buildRetrievalIndex } from '../lib/retrieval/build-index';
 import { sealRetrievalIndex } from '../lib/retrieval/index-schema';
-import { configuredApproach, inspectRetrievalIndex, loadRetrievalSnapshot, requireFreshRetrievalIndex, retrievalMetadata } from '../lib/retrieval/load';
+import { configuredStrategy, configuredApproach, inspectRetrievalIndex, loadRetrievalSnapshot, requireFreshRetrievalIndex, retrievalMetadata } from '../lib/retrieval/load';
 import { VOYAGE_EMBEDDING_CONFIG } from '../lib/retrieval/voyage';
 
 async function fixture() {
@@ -55,4 +55,12 @@ describe('retrieval readiness', () => {
       vi.stubEnv('CVAI_APPROACH', 'typo'); expect(() => configuredApproach()).toThrow();
     } finally { vi.unstubAllEnvs(); }
   });
+});
+
+it('configuredStrategy defaults to jev, accepts wide, throws on anything else', () => {
+  for (const value of [undefined, '', 'jev']) expect(configuredStrategy({ CVAI_RETRIEVAL_STRATEGY: value })).toBe('jev');
+  expect(configuredStrategy({ CVAI_RETRIEVAL_STRATEGY: 'wide' })).toBe('wide');
+  for (const value of ['Wide', 'rag', 'typo']) expect(() => configuredStrategy({ CVAI_RETRIEVAL_STRATEGY: value })).toThrow();
+  try { vi.stubEnv('CVAI_RETRIEVAL_STRATEGY', 'wide'); expect(configuredStrategy()).toBe('wide'); }
+  finally { vi.unstubAllEnvs(); }
 });

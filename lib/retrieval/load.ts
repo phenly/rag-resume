@@ -59,3 +59,11 @@ export function retrievalMetadata(state: RetrievalState) {
     schemaVersion: index.schemaVersion, embeddingModel: index.embedding.model, dimensions: index.embedding.dimensions,
   } : { status: state.status };
 }
+
+export type RetrievalStrategy = 'jev' | 'wide';
+
+export function configuredStrategy(env: Record<string, string | undefined> = process.env): RetrievalStrategy {
+  const value = env.CVAI_RETRIEVAL_STRATEGY || 'jev';
+  if (value !== 'jev' && value !== 'wide') throw new Error('CVAI_RETRIEVAL_STRATEGY must be jev or wide');
+  return value;
+}
