@@ -75,3 +75,12 @@ export function buildRagSystemPrompt(corpus: Corpus, units: readonly RetrievalUn
   prefix[prefix.length - 1] = { ...prefix[prefix.length - 1], cache_control: { type: "ephemeral", ttl: "1h" } };
   return [...prefix, { type: "text", text: renderRetrievalEvidence(units) }];
 }
+
+/** Wide's cache breakpoint includes the shared prefix and always-supplied evidence. */
+export function buildWideSystemPrompt(corpus: Corpus, always: readonly RetrievalUnit[], retrieved: readonly RetrievalUnit[]): Anthropic.Beta.BetaTextBlockParam[] {
+  return [
+    ...buildSharedPromptPrefix(corpus),
+    { type: "text", text: "# Career context supplied with every answer\n\n" + renderRetrievalEvidence(always), cache_control: { type: "ephemeral", ttl: "1h" } },
+    ...(retrieved.length ? [{ type: "text" as const, text: renderRetrievalEvidence(retrieved) }] : []),
+  ];
+}
