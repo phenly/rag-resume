@@ -30,11 +30,15 @@ export type RagTrace = {
   search?: SearchTrace; rerank?: RerankTrace;
   embedding?: { status: 'complete'; inputTokens: number; costUsd: number } | { status: 'usage-unknown' };
   fallbackReason?: string;
+  strategy?: 'jev' | 'wide';
+  wide?: { alwaysIds: string[]; retrievedIds: string[]; droppedIds: string[]; evidenceBytes: number; overviewPresent: boolean };
+  unavailableReason?: string;
 };
 export type RagResolution = (
-  | { kind: 'evidence'; selected: RetrievalUnit[] }
+  | { kind: 'evidence'; selected: RetrievalUnit[]; always?: RetrievalUnit[] }
   | { kind: 'route'; route: 'redirect' | 'decline'; answer: string }
   | { kind: 'fallback'; reason: string }
+  | { kind: 'unavailable'; reason: string }
   | { kind: 'cancelled' }
 ) & { trace: RagTrace };
 export type RagPipeline = { ready: boolean; resolve(options: { question: string; verifiedHistory?: readonly VerifiedQueryTurn[]; signal?: AbortSignal }): Promise<RagResolution> };

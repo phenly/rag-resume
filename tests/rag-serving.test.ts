@@ -2,17 +2,19 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { corpusFixture } from './fixtures/corpus';
 import { loadCorpus } from '../lib/corpus';
 import { signTurn } from '../lib/history';
-const mocks = vi.hoisted(() => ({ resolve: vi.fn(), guard: vi.fn(), generate: vi.fn(), prepare: vi.fn() }));
+const mocks = vi.hoisted(() => ({ resolve: vi.fn(), guard: vi.fn(), generate: vi.fn(), prepare: vi.fn(), whole: vi.fn(), guardFactory: vi.fn() }));
 vi.mock('../lib/retrieval/production', () => ({
   UNAVAILABLE_ANSWER: 'Temporarily unavailable.', generatorContextLimit: () => 20000,
-  prepareProductionRagPipeline: mocks.prepare, createWholeFallbackGuard: () => mocks.guard,
+  prepareProductionRagPipeline: mocks.prepare, createWholeFallbackGuard: mocks.guardFactory,
 }));
 vi.mock('../lib/claude', async original => ({ ...await original<object>(), readAskConfig: () => ({ apiKey: 'fictional', model: 'fictional-model', effort: 'low', maxTokens: 1000 }), streamAnswer: mocks.generate }));
+vi.mock('../lib/prompt', async original => { const actual = await original<typeof import('../lib/prompt')>(); return { ...actual, buildSystemPrompt: mocks.whole.mockImplementation(actual.buildSystemPrompt) }; });
 beforeEach(async () => {
   vi.resetModules(); vi.clearAllMocks();
   const f = await corpusFixture(); vi.stubEnv('CORPUS_DIR', f.dir); vi.stubEnv('CVAI_APPROACH', 'rag'); vi.stubEnv('HISTORY_SECRET', 'fictional-secret');
   mocks.prepare.mockResolvedValue({ ready: true, resolve: mocks.resolve });
   mocks.resolve.mockResolvedValue({ kind: 'fallback', reason: 'test', trace: {} });
+  mocks.guardFactory.mockReturnValue(mocks.guard);
   mocks.guard.mockResolvedValue({ eligible: true });
   mocks.generate.mockImplementation(async function* () { yield { type: 'text', text: 'Fictional answer' }; yield { type: 'done', status: 'complete' }; });
 });
@@ -59,4 +61,11 @@ it('rejects visitor approach overrides before preparing providers', async () => 
   const { POST } = await import('../app/api/ask/route');
   expect((await POST(request({ question: 'widgets?', approach: 'whole' }))).status).toBe(400);
   expect(mocks.prepare).not.toHaveBeenCalled(); expect(mocks.generate).not.toHaveBeenCalled();
+});
+
+it('unavailable never constructs the whole prompt or starts generation', async () => {
+  mocks.resolve.mockResolvedValue({ kind: 'unavailable', reason: 'index-missing', trace: {} });
+  const { POST } = await import('../app/api/ask/route'); const text = await (await POST(request({ question: 'lantern?' }))).text();
+  expect(text).toContain('Temporarily unavailable.'); expect(text).toContain('"status":"incomplete"'); expect(text).not.toContain('"sig":');
+  expect(mocks.whole).not.toHaveBeenCalled(); expect(mocks.guardFactory).not.toHaveBeenCalled(); expect(mocks.generate).not.toHaveBeenCalled();
 });

@@ -1,3 +1,4 @@
+import { assertNever } from '../retrieval/assert-never';
 import Anthropic from '@anthropic-ai/sdk';
 import type { Corpus } from '../corpus';
 import type { AskConfig } from '../claude';
@@ -28,8 +29,7 @@ export function ragApproach(config: AskConfig, options: {
       corpus = structuredClone(input);
       try { pipeline = await (options.preparePipeline?.(corpus) ?? prepareProductionRagPipeline({ corpus, corpusDir: options.corpusDir, config, client })); }
       catch { pipeline = { resolve: async () => ({ kind: 'fallback', reason: 'preparation', trace: { retrievalConfigVersion: RETRIEVAL_CONFIG_VERSION, elapsedMs: 0, stages: {}, fallbackReason: 'preparation' } }) }; }
-      const fallbackGuard = createWholeFallbackGuard({ corpus, corpusDir: options.corpusDir, config, client });
-      guard = options.fallbackEligible ?? ((question, history) => fallbackGuard({ question, history: evalHistory(history) }));
+      guard = options.fallbackEligible ?? ((question, history) => createWholeFallbackGuard({ corpus, corpusDir: options.corpusDir, config, client })({ question, history: evalHistory(history) }));
     },
     async answer(question, history): Promise<Answer> {
       if (!pipeline) throw new Error('RAG evaluation must be prepared');
@@ -42,15 +42,25 @@ export function ragApproach(config: AskConfig, options: {
         retrievedChunkIds: resolved.kind === 'evidence' ? resolved.selected.map(unit => unit.id) : [],
         droppedByRerank: resolved.trace.rerank?.decisions.filter(item => item.reason !== 'selected').map(item => item.id) ?? [],
       };
-      if (resolved.kind === 'cancelled') throw Object.assign(new Error('RAG evaluation cancelled'), metadata);
-      if (resolved.kind === 'route') return {
+      let system: ReturnType<typeof buildSystemPrompt>;
+      switch (resolved.kind) {
+      case 'cancelled': throw Object.assign(new Error('RAG evaluation cancelled'), metadata);
+      case 'unavailable': return {
+        ...metadata, generationEligibility: { eligible: false }, text: UNAVAILABLE_ANSWER, effectiveApproach: 'deterministic', actualContext: 'none',
+        suppliedEvidence: buildSharedPromptPrefix(corpus).map(block => block.text).join('\n\n'),
+        usage: { input_tokens: 0, output_tokens: 0 }, timings: { firstTokenMs: null, totalMs: performance.now() - start },
+      };
+      case 'route': return {
         ...metadata, text: resolved.answer, effectiveApproach: 'deterministic', actualContext: 'none',
         suppliedEvidence: buildSharedPromptPrefix(corpus).map(block => block.text).join('\n\n'),
         usage: { input_tokens: 0, output_tokens: 0 },
         timings: { firstTokenMs: null, totalMs: performance.now() - start, stages: { retrieval: retrievalMs, generation: 0 } },
       };
+      case 'evidence': system = buildRagSystemPrompt(corpus, resolved.selected); break;
+      case 'fallback': system = buildSystemPrompt(corpus); break;
+      default: assertNever(resolved);
+      }
       try {
-        const system = resolved.kind === 'evidence' ? buildRagSystemPrompt(corpus, resolved.selected) : buildSystemPrompt(corpus);
         const generationEligibility = resolved.kind === 'fallback' || options.fallbackEligible ? await guard(question, turns) : await createWholeFallbackGuard({ corpus, corpusDir: options.corpusDir, config, client })({ question, system, history: evalHistory(turns) });
         if (!generationEligibility.eligible) return { ...metadata, generationEligibility, retrievedChunkIds: [], text: UNAVAILABLE_ANSWER, effectiveApproach: 'deterministic', actualContext: 'none', suppliedEvidence: buildSharedPromptPrefix(corpus).map(block => block.text).join('\n\n'), usage: { input_tokens: 0, output_tokens: 0 }, timings: { firstTokenMs: null, totalMs: performance.now() - start } };
         const generated = await collectAnswer(question, system, config, client, turns);

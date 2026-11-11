@@ -1,3 +1,4 @@
+import { assertNever } from '@/lib/retrieval/assert-never';
 import { CorpusError, resolveCorpusDir, type Corpus } from "@/lib/corpus";
 import { getCorpus } from "@/lib/corpus-cache";
 import { logServerError } from "@/lib/log";
@@ -26,7 +27,7 @@ function getRag(corpus: Corpus, config: AskConfig): Promise<Prepared> {
 
 async function* answerEvents(question: string, corpus: Corpus, config: AskConfig, signal: AbortSignal, history: Turn[]): AsyncGenerator<AskEvent> {
   if (signal.aborted) return;
-  let system = getSystem(corpus);
+  let system: System;
   if (configuredApproach() === 'rag') {
     if (generatorContextLimit() === undefined) {
       yield { type: 'text', text: UNAVAILABLE_ANSWER };
@@ -37,17 +38,24 @@ async function* answerEvents(question: string, corpus: Corpus, config: AskConfig
       const prepared = await getRag(corpus, config);
       if (signal.aborted) return;
       const result = await prepared.resolve({ question, verifiedHistory: history, signal });
-      if (result.kind === 'cancelled' || signal.aborted) return;
-      if (result.kind === 'route') {
-        yield { type: 'text', text: result.answer };
-        yield { type: 'done', status: 'complete' };
-        return;
-      }
-      if (result.kind === 'evidence') {
-        system = buildRagSystemPrompt(corpus, result.selected);
+      if (signal.aborted) return;
+      switch (result.kind) {
+        case 'cancelled': return;
+        case 'unavailable':
+          yield { type: 'text', text: UNAVAILABLE_ANSWER };
+          yield { type: 'done', status: 'incomplete' };
+          return;
+        case 'route':
+          yield { type: 'text', text: result.answer };
+          yield { type: 'done', status: 'complete' };
+          return;
+        case 'evidence': system = buildRagSystemPrompt(corpus, result.selected); break;
+        case 'fallback': system = getSystem(corpus); break;
+        default: assertNever(result);
       }
     } catch {
       // Preparation failures are retried next request; never expose provider errors.
+      system = getSystem(corpus);
     }
     if (signal.aborted) return;
     {
@@ -60,6 +68,7 @@ async function* answerEvents(question: string, corpus: Corpus, config: AskConfig
       }
     }
   }
+  else system = getSystem(corpus);
   if (!signal.aborted) yield* streamAnswer(question, system, config, undefined, signal, history);
 }
 

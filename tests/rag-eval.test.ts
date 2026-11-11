@@ -1,3 +1,4 @@
+import * as prompt from '../lib/prompt';
 import Anthropic from '@anthropic-ai/sdk';
 import { describe, expect, it, vi } from 'vitest';
 import { loadCorpus } from '../lib/corpus';
@@ -52,4 +53,15 @@ it.each(['evidence', 'fallback'] as const)('generates %s answers with local usag
   await approach.prepare(await corpus()); const result = await approach.answer('widgets?');
   expect(result).toMatchObject({ text: 'Fictional answer', effectiveApproach: kind === 'evidence' ? 'rag' : 'whole', actualContext: kind === 'evidence' ? 'selected-evidence' : 'whole-corpus', retrievedChunkIds: kind === 'evidence' ? ['EX-1'] : [], usage: { input_tokens: 50, output_tokens: 10 } });
   expect(stream).toHaveBeenCalledOnce();
+});
+
+it('unavailable never constructs the whole prompt or starts generation', async () => {
+  const whole = vi.spyOn(prompt, 'buildSystemPrompt'); const stream = vi.fn(); const countTokens = vi.fn(); const fallbackEligible = vi.fn();
+  const api = { beta: { messages: { stream, countTokens } } } as unknown as Anthropic;
+  try {
+    const approach = ragApproach(config, { corpusDir: '.', client: api, fallbackEligible, preparePipeline: async () => ({ resolve: async () => ({ kind: 'unavailable', reason: 'index-missing', trace: trace() }) }) });
+    await approach.prepare(await corpus()); const answer = await approach.answer('lantern?');
+    expect(answer).toMatchObject({ actualContext: 'none', generationEligibility: { eligible: false }, usage: { input_tokens: 0, output_tokens: 0 } });
+    expect(whole).not.toHaveBeenCalled(); expect(stream).not.toHaveBeenCalled(); expect(countTokens).not.toHaveBeenCalled(); expect(fallbackEligible).not.toHaveBeenCalled();
+  } finally { whole.mockRestore(); }
 });

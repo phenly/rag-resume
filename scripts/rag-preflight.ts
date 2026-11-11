@@ -1,3 +1,8 @@
+import { pathToFileURL } from 'node:url';
+import { assertNever } from '../lib/retrieval/assert-never';
+import type { RagResolution } from '../lib/retrieval/pipeline';
+import type { Corpus } from '../lib/corpus';
+import type { EvalCase } from '../lib/eval/types';
 /** Bounded local provider check. Output is private; never deploys or changes approach. */
 import Anthropic from '@anthropic-ai/sdk';
 import { writeFile } from 'node:fs/promises';
@@ -7,6 +12,26 @@ import { readCases } from '../lib/eval/cases';
 import { buildRagSystemPrompt, buildSharedPromptPrefix, buildSystemPrompt } from '../lib/prompt';
 import { prepareProductionRagPipeline, createWholeFallbackGuard } from '../lib/retrieval/production';
 import { createGenerationTokenBudget } from '../lib/retrieval/token-budget';
+
+/** Resolve one receipt row; guard construction is deferred until generation is eligible for counting. */
+export async function preflightResolution(c: Pick<EvalCase, 'id' | 'question' | 'history'>, result: RagResolution,
+  corpus: Corpus, createGuard: () => ReturnType<typeof createWholeFallbackGuard>) {
+  const row = { id: c.id, kind: result.kind, trace: result.trace };
+  let system: ReturnType<typeof buildSystemPrompt>;
+  switch (result.kind) {
+    case 'unavailable':
+    case 'route':
+    case 'cancelled': return { ...row, eligibility: null, countMs: null };
+    case 'evidence': system = buildRagSystemPrompt(corpus, result.selected); break;
+    case 'fallback': system = buildSystemPrompt(corpus); break;
+    default: assertNever(result);
+  }
+  const guard = createGuard();
+  const countStart = performance.now();
+  const eligibility = await guard({ question: c.question, system,
+    history: c.history?.map(turn => ({ ...turn, sig: 'trusted-offline-fixture' })) });
+  return { ...row, eligibility, countMs: performance.now() - countStart };
+}
 
 async function main() {
   const [casesFile, ids, output, ...extra] = process.argv.slice(2);
@@ -30,23 +55,14 @@ async function main() {
   const prepareMs = performance.now() - started;
   const counter = createGenerationTokenBudget({ model: config.model, countTokens: client.beta.messages.countTokens.bind(client.beta.messages) });
   const prefixTokens = await counter.countRequest({ system: buildSharedPromptPrefix(corpus), question: '.' }, { signal: AbortSignal.timeout(5000) });
-  const guard = createWholeFallbackGuard({ corpus, corpusDir, config, client });
   const rows = [];
   for (const c of selected) {
     const result = await pipeline.resolve({ question: c.question, verifiedHistory: c.history });
-    if (result.kind === 'route' || result.kind === 'cancelled') {
-      rows.push({ id: c.id, kind: result.kind, trace: result.trace, eligibility: null, countMs: null });
-      continue;
-    }
-    const system = result.kind === 'evidence' ? buildRagSystemPrompt(corpus, result.selected) : buildSystemPrompt(corpus);
-    const countStart = performance.now();
-    const eligibility = await guard({ question: c.question, system,
-      history: c.history?.map(turn => ({ ...turn, sig: 'trusted-offline-fixture' })) });
-    rows.push({ id: c.id, kind: result.kind, trace: result.trace, eligibility, countMs: performance.now() - countStart });
+    rows.push(await preflightResolution(c, result, corpus, () => createWholeFallbackGuard({ corpus, corpusDir, config, client })));
   }
   await writeFile(output, JSON.stringify({ measuredAt: new Date().toISOString(), corpusVersion: corpus.version,
     ready: pipeline.ready, prepareMs, prefixTokensIncludingProbe: prefixTokens, model: config.model, rows }, null, 2) + '\n');
   console.log(JSON.stringify({ ready: pipeline.ready, prepareMs, prefixTokensIncludingProbe: prefixTokens,
     outcomes: rows.map(row => ({ id: row.id, kind: row.kind, reason: row.trace.fallbackReason, countMs: row.countMs, eligibility: row.eligibility })) }, null, 2));
 }
-main().catch(() => { console.error('RAG preflight failed; inspect local configuration and connectivity.'); process.exitCode = 1; });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(() => { console.error('RAG preflight failed; inspect local configuration and connectivity.'); process.exitCode = 1; });
