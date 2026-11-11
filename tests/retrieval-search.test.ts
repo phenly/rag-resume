@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { buildLexicalStatistics, TOKENIZER_VERSION, tokenize } from '../lib/retrieval/lexical';
 import { prepareHybridSearch } from '../lib/retrieval/search';
+import { RETRIEVAL_CONFIG_VERSION } from '../lib/retrieval/pipeline';
 import { computeIndexVersion, sealRetrievalIndex, validateRetrievalIndex, type IndexPayload } from '../lib/retrieval/index-schema';
 import { buildRetrievalIndex } from '../lib/retrieval/build-index';
 import { VOYAGE_EMBEDDING_CONFIG } from '../lib/retrieval/voyage';
@@ -18,6 +19,42 @@ function payload(documents = [
 }
 
 describe('deterministic offline hybrid retrieval', () => {
+  it('returns the requested number of dense matches', () => {
+    const documents = Array.from({ length: 6 }, (_, i) => ({ id: `EX-${i}`, searchText: 'widgets', vector: [1, i] }));
+    const { search } = prepareHybridSearch(sealRetrievalIndex(payload(documents)));
+    const q = { question: 'widgets', vector: [1, 0] };
+    const dense = search(q, { denseLimit: 3 }).dense;
+    expect(dense).toHaveLength(3);
+    expect(dense).toEqual(search(q, { denseLimit: 5 }).dense.slice(0, 3));
+  });
+  it('default limits are unchanged', () => {
+    const { search } = prepareHybridSearch(sealRetrievalIndex(payload()));
+    const q = { question: 'widgets', vector: [1, 0] };
+    expect(search(q)).toEqual(search(q, {}));
+    expect(RETRIEVAL_CONFIG_VERSION).toBe('738011460764090aa0079c77e14bf7d7158307482fd45cb69022d6fd90b8d758');
+  });
+  it('rejects a non-positive or non-integer limit', () => {
+    const { search } = prepareHybridSearch(sealRetrievalIndex(payload()));
+    const q = { question: 'widgets', vector: [1, 0] };
+    for (const field of ['denseLimit', 'lexicalLimit', 'candidateLimit'] as const) {
+      for (const value of [0, -1, 1.5, NaN, Infinity]) {
+        expect(() => search(q, { [field]: value })).toThrow('Retrieval search: invalid limit');
+      }
+    }
+  });
+  it('applies lexical and candidate limits independently for each call', () => {
+    const documents = Array.from({ length: 30 }, (_, i) => ({ id: `EX-${String(i).padStart(2, '0')}`, searchText: 'widgets', vector: [1, 0] }));
+    const { search } = prepareHybridSearch(sealRetrievalIndex(payload(documents)));
+    const q = { question: 'widgets', vector: [1, 0] };
+    const defaults = search(q);
+    const result = search(q, { denseLimit: 30, lexicalLimit: 28, candidateLimit: 26 });
+    expect(result.dense).toHaveLength(30);
+    expect(result.lexical).toHaveLength(28);
+    expect(result.fused).toHaveLength(26);
+    expect(search(q, { lexicalLimit: 3 }).lexical).toEqual(defaults.lexical.slice(0, 3));
+    expect(search(q, { candidateLimit: 5 }).fused).toEqual(defaults.fused.slice(0, 5));
+    expect(search(q)).toEqual(defaults);
+  });
   it('normalizes Unicode forms and keeps acronyms, numbers and accented words intact', () => {
     expect(tokenize('ＣＡＰＩ CAPI ２０２６ cafe\u0301 naïve API/v2')).toEqual(['capi', 'capi', '2026', 'café', 'naïve', 'api', 'v2']);
   });

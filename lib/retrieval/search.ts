@@ -5,6 +5,7 @@ export const HYBRID_SEARCH_CONFIG = Object.freeze({ k1: 1.2, b: 0.75, denseLimit
 export type RankedMatch = { id: string; score: number };
 export type FusedMatch = RankedMatch & { denseRank?: number; lexicalRank?: number };
 export type SearchTrace = { dense: RankedMatch[]; lexical: RankedMatch[]; fused: FusedMatch[] };
+export type SearchLimits = { denseLimit?: number; lexicalLimit?: number; candidateLimit?: number };
 export type HybridQuery = {
   question: string;
   /** Already bounded, verified context retained by the query builder, without labels. */
@@ -24,7 +25,7 @@ function normalizeQuery(vector: readonly number[], dimensions: number): Float64A
 }
 
 /** Validate and normalize once. No provider calls; query vectors must come from the matching adapter. */
-export function prepareHybridSearch(input: RetrievalIndex): { search(query: HybridQuery): SearchTrace } {
+export function prepareHybridSearch(input: RetrievalIndex): { search(query: HybridQuery, limits?: SearchLimits): SearchTrace } {
   validateRetrievalIndex(input);
   if (input.tokenizerVersion !== TOKENIZER_VERSION || !input.lexical) throw new Error('Retrieval search: index has no current lexical statistics');
   // Own the snapshot so later caller mutations cannot bypass validation or change ranking.
@@ -33,13 +34,17 @@ export function prepareHybridSearch(input: RetrievalIndex): { search(query: Hybr
   const ids = index.units.map(unit => unit.id);
   const lexical = index.lexical!;
   const config = HYBRID_SEARCH_CONFIG;
-  return { search({ question, context = '', vector }: HybridQuery): SearchTrace {
+  return { search({ question, context = '', vector }: HybridQuery, limits: SearchLimits = {}): SearchTrace {
+    const { denseLimit = config.denseLimit, lexicalLimit = config.lexicalLimit, candidateLimit = config.candidateLimit } = limits;
+    for (const limit of [denseLimit, lexicalLimit, candidateLimit]) {
+      if (!Number.isInteger(limit) || limit <= 0) throw new Error('Retrieval search: invalid limit');
+    }
     const query = normalizeQuery(vector, index.embedding.dimensions);
     const dense = vectors.map((document, i) => {
       let score = 0;
       for (let j = 0; j < query.length; j++) score += query[j] * document[j];
       return { id: ids[i], score: Math.max(-1, Math.min(1, score)) };
-    }).sort(stableRank).slice(0, config.denseLimit);
+    }).sort(stableRank).slice(0, denseLimit);
     const weights = new Map<string, number>();
     for (const [text, weight] of [[question, config.questionWeight], [context, config.contextWeight]] as const) {
       for (const term of tokenize(text)) weights.set(term, (weights.get(term) ?? 0) + weight);
@@ -56,7 +61,7 @@ export function prepareHybridSearch(input: RetrievalIndex): { search(query: Hybr
       }
     }
     const lexicalMatches = Array.from(scores, (score, i) => ({ id: ids[i], score }))
-      .filter(match => match.score > 0).sort(stableRank).slice(0, config.lexicalLimit);
+      .filter(match => match.score > 0).sort(stableRank).slice(0, lexicalLimit);
     const fused = new Map<string, FusedMatch>();
     for (const [matches, field] of [[dense, 'denseRank'], [lexicalMatches, 'lexicalRank']] as const) {
       matches.forEach(({ id }, offset) => {
@@ -67,6 +72,6 @@ export function prepareHybridSearch(input: RetrievalIndex): { search(query: Hybr
         fused.set(id, match);
       });
     }
-    return { dense, lexical: lexicalMatches, fused: [...fused.values()].sort(stableRank).slice(0, config.candidateLimit) };
+    return { dense, lexical: lexicalMatches, fused: [...fused.values()].sort(stableRank).slice(0, candidateLimit) };
   } };
 }
