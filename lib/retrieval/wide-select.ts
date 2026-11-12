@@ -5,8 +5,11 @@ import type { RankedMatch } from './search';
 export const WIDE_SELECTION_CONFIG = Object.freeze({
   version: 'wide-selection-1',
   retrievedLimit: 40,
-  // Provisional; Task 11 calibrates this cap using offline evidence measurements.
-  maxEvidenceBytes: 160_000,
+  // Measured 2026-11-12 on the 61-case coverage run: evidence ranged 36.6-57.5 KB (median 51.4 KB), so
+  // 100 KB leaves about 1.7x headroom for corpus growth. The generator limit is 1M tokens and
+  // requestByteBound treats a byte as a token (offline receipts show real prompts run at ~0.32
+  // tokens per byte), so the cap uses a small fraction of the context.
+  maxEvidenceBytes: 100_000,
   alwaysIdSuffix: '-SCOPE',
   alwaysDocumentTitle: 'Career Overview',
 });

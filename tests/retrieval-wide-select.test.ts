@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderRetrievalEvidence } from '../lib/prompt';
 import type { RetrievalUnit } from '../lib/retrieval/extract';
 import { isAlwaysSupplied, selectWideEvidence, WIDE_SELECTION_CONFIG, type WideSelection } from '../lib/retrieval/wide-select';
+import { fitsGeneratorContext } from '../lib/retrieval/size-guard';
 import { generateWideUnits, wideRetrievalCorpusFixture } from './fixtures/wide-retrieval-corpus';
 
 const rank = (units: readonly RetrievalUnit[]) => units.map((unit, index) => ({ id: unit.id, score: 1 / (index + 1) }));
@@ -123,5 +124,11 @@ describe('wide evidence selection', () => {
       expect(unit.vector.every(Number.isFinite)).toBe(true);
       expect(Math.hypot(...unit.vector)).toBeCloseTo(1);
     }
+  });
+
+  it('uses the measured evidence cap, which leaves the generator context nearly untouched', () => {
+    expect(WIDE_SELECTION_CONFIG.maxEvidenceBytes).toBe(100_000);
+    // Bytes bound tokens, so a 1M-token limit must still fit cap + a generous prefix, history and output.
+    expect(fitsGeneratorContext({ byteBound: WIDE_SELECTION_CONFIG.maxEvidenceBytes + 300_000, maxTokens: 2500, limit: 1_000_000 })).toBe(true);
   });
 });
