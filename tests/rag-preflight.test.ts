@@ -48,3 +48,9 @@ it('unavailable records kind and trace without whole prompt construction or coun
     expect(whole).not.toHaveBeenCalled(); expect(createGuard).not.toHaveBeenCalled();
   } finally { whole.mockRestore(); }
 });
+
+it('refuses the wide strategy, whose prompt layout preflight does not measure', async () => {
+  const { assertPreflightStrategy } = await import('../scripts/rag-preflight');
+  expect(() => assertPreflightStrategy('wide')).toThrow(/jev/i);
+  expect(() => assertPreflightStrategy('jev')).not.toThrow();
+});

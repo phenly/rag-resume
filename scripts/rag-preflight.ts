@@ -12,6 +12,7 @@ import { loadCorpus, resolveCorpusDir } from '../lib/corpus';
 import { readCases } from '../lib/eval/cases';
 import { buildRagSystemPrompt, buildSharedPromptPrefix, buildSystemPrompt } from '../lib/prompt';
 import { prepareProductionRagPipeline, createWholeFallbackGuard } from '../lib/retrieval/production';
+import { configuredStrategy, type RetrievalStrategy } from '../lib/retrieval/load';
 import { createGenerationTokenBudget } from '../lib/retrieval/token-budget';
 
 /** Resolve one receipt row; guard construction is deferred until generation is eligible for counting. */
@@ -34,7 +35,13 @@ export async function preflightResolution(c: Pick<EvalCase, 'id' | 'question' | 
   return { ...row, eligibility, countMs: performance.now() - countStart };
 }
 
+/** Preflight measures the Jev prompt layout and counts tokens; wide sends neither. */
+export function assertPreflightStrategy(strategy: RetrievalStrategy) {
+  if (strategy !== 'jev') throw new Error('rag-preflight measures the jev strategy only; unset CVAI_RETRIEVAL_STRATEGY or set it to jev');
+}
+
 async function main() {
+  assertPreflightStrategy(configuredStrategy());
   const [casesFile, ids, output, ...extra] = process.argv.slice(2);
   if (!casesFile || !ids || !output || extra.length) throw new Error('Usage: rag-preflight.ts <cases.json> <id,id> <private-output.json>');
   const requested = ids.split(',');

@@ -72,6 +72,12 @@ describe('wide evidence selection', () => {
     expect(result.overviewPresent).toBe(false);
   });
 
+  it('an instruction-bearing About unit alone does not make the overview present', () => {
+    const about = fixture.units.find(unit => unit.kind === 'about' && unit.promptText !== unit.searchText)!;
+    const units = [...fixture.units.filter(unit => unit.document !== 'Career Overview'), { ...about, id: 'about:Career Overview', document: 'Career Overview' }];
+    expect(evidence(selectWideEvidence({ units, dense: [] })).overviewPresent).toBe(false);
+  });
+
   it('no always-supplied unit is unavailable', () => {
     const units = generateWideUnits(2);
     expect(selectWideEvidence({ units, dense: rank(units) })).toEqual({ kind: 'unavailable', reason: 'no-always-units' });

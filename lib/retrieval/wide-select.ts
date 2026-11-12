@@ -57,6 +57,6 @@ export function selectWideEvidence(input: { units: readonly RetrievalUnit[]; den
 
   return {
     kind: 'evidence', always, retrieved, droppedIds, evidenceBytes,
-    overviewPresent: always.some(unit => unit.document === WIDE_SELECTION_CONFIG.alwaysDocumentTitle),
+    overviewPresent: always.some(unit => unit.kind === 'entry' && unit.document === WIDE_SELECTION_CONFIG.alwaysDocumentTitle),
   };
 }
