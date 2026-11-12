@@ -1,13 +1,16 @@
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { categories, type ApproachResult, type CaseResult } from './types';
+import type { RetrievalStrategy } from '../retrieval/load';
 import type { countCorpus } from './corpus';
 export type Run = {
+  strategy?: RetrievalStrategy;
   version: 1; status?: 'complete' | 'incomplete'; stopReason?: string; promptTemplateVersion?: string; retrievalConfigVersion?: string; startedAt: string; answerModel: string; judgeModel: string | null;
   corpus: { version: string; chunkCount: number; tokens?: Awaited<ReturnType<typeof countCorpus>>; tokenError?: string };
   approaches: ApproachResult[];
 };
 const eligible = (r: CaseResult) => r.case.status !== 'open' && r.case.category !== 'leak-probe';
+const unavailable = (r: CaseResult) => r.answer?.effectiveApproach === 'unavailable';
 const mean = (v: number[]) => v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
 /** Nearest-rank percentiles; empty or unavailable timings remain unmeasured. */
 function latency(values: number[]) {
@@ -16,6 +19,8 @@ function latency(values: number[]) {
   return { count: sorted.length, p50: percentile(0.5), p95: percentile(0.95) };
 }
 export function summarize(a: ApproachResult) {
+  const wide = a.strategy === 'wide';
+  const retrievalCases = wide ? a.cases.filter(r => !unavailable(r)) : a.cases;
   const scored = a.cases.filter(eligible);
   const passing = scored.filter(r => r.status === 'pass').length;
   const isJudged = (r: CaseResult) => !!r.answer && !!r.judge && ['pass', 'fail', 'leak-failure'].includes(r.status) && r.answer?.generationEligibility?.eligible !== false;
@@ -30,14 +35,15 @@ export function summarize(a: ApproachResult) {
   const usage = a.cases.flatMap(r => r.answer ? [r.answer.usage] : r.answerUsage ? [r.answerUsage] : []);
   const input = usage.reduce((s, u) => s + u.input_tokens + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0), 0);
   const speeds = Object.fromEntries(['cold', 'warm', 'uncached'].map(kind => {
-    const answers = a.cases.flatMap(r => r.answer ? [r.answer] : []).filter(a =>
+    const answers = retrievalCases.flatMap(r => r.answer ? [r.answer] : []).filter(a =>
       kind === 'cold' ? (a.usage.cache_creation_input_tokens ?? 0) > 0 : kind === 'warm' ? !(a.usage.cache_creation_input_tokens ?? 0) && (a.usage.cache_read_input_tokens ?? 0) > 0 : !(a.usage.cache_creation_input_tokens ?? 0) && !(a.usage.cache_read_input_tokens ?? 0));
     return [kind, { count: answers.length, firstTokenMs: mean(answers.flatMap(a => a.timings.firstTokenMs === null ? [] : [a.timings.firstTokenMs])), totalMs: mean(answers.map(a => a.timings.totalMs)) }];
   }));
   const comparisonIneligible = a.cases.filter(r => r.answer && r.answer.effectiveApproach !== 'deterministic' && r.comparisonEligible !== true).map(r => r.case.id);
   const retrievalAttempts = a.name === 'rag' ? a.cases.filter(r => r.status !== 'skipped').length : 0;
-  const fallbackCount = a.name === 'rag' ? a.cases.filter(r => (r.answer?.retrievalTrace ?? r.retrievalTrace)?.fallbackReason !== undefined).length : 0;
+  const fallbackCount = !wide && a.name === 'rag' ? a.cases.filter(r => (r.answer?.retrievalTrace ?? r.retrievalTrace)?.fallbackReason !== undefined).length : 0;
   return {
+    ...(wide ? { unavailableCount: a.cases.filter(unavailable).length } : {}),
     comparisonValid: qualityComplete && comparisonIneligible.length === 0,
     qualityComplete,
     skippedCases: a.cases.filter(r => r.status === 'skipped').map(r => r.case.id),
@@ -50,7 +56,7 @@ export function summarize(a: ApproachResult) {
         totalMs: latency(answers.map(answer => answer.timings.totalMs)) }];
     })),
     fallback: { count: fallbackCount, attempted: retrievalAttempts, frequency: retrievalAttempts ? fallbackCount / retrievalAttempts : null,
-      completedWholeAnswers: a.name === 'rag' ? a.cases.filter(r => r.answer?.effectiveApproach === 'whole').length : 0 },
+      completedWholeAnswers: !wide && a.name === 'rag' ? a.cases.filter(r => r.answer?.effectiveApproach === 'whole').length : 0 },
     contextGrounding: { assessed: a.cases.filter(r => r.judge?.contextGrounding === 'assessed').length,
       unavailable: a.cases.filter(r => r.judge && r.judge.contextGrounding !== 'assessed').length,
       unjudged: a.cases.filter(r => !r.judge).length },
@@ -62,8 +68,8 @@ export function summarize(a: ApproachResult) {
     })),
     comparisonIneligible,
     contextGroundingUnavailable: a.cases.filter(r => r.judge && r.judge.contextGrounding !== 'assessed').map(r => r.case.id),
-    retrievalStages: Object.fromEntries(['dense', 'lexical', 'fused', 'filtered', 'reranked', 'selected'].map(stage => {
-      const metrics = a.cases.flatMap(r => { const value = r.retrievalStages?.[stage as keyof NonNullable<CaseResult['retrievalStages']>]; return value?.recallAtK == null ? [] : [value.recallAtK]; });
+    retrievalStages: Object.fromEntries((wide ? ['dense', 'lexical', 'always', 'supplied'] : ['dense', 'lexical', 'fused', 'filtered', 'reranked', 'selected']).map(stage => {
+      const metrics = retrievalCases.flatMap(r => { const value = r.retrievalStages?.[stage as keyof NonNullable<CaseResult['retrievalStages']>]; return value?.recallAtK == null ? [] : [value.recallAtK]; });
       return [stage, { cases: metrics.length, meanRecall: mean(metrics) }];
     })),
     effectiveApproaches: Object.fromEntries(['rag', 'whole', 'deterministic'].map(kind => [kind, { answers: a.cases.filter(r => r.answer?.effectiveApproach === kind).length, passing: scored.filter(r => r.answer?.effectiveApproach === kind && r.status === 'pass').length }])),
@@ -89,9 +95,12 @@ export function report(run: Run): string {
     `Exact prompt tokens: ${t ?? 'unavailable'} — ${pressure}.`, run.corpus.tokens?.note ?? (run.corpus.tokenError ? `Token counting error: ${run.corpus.tokenError}` : 'Token counting skipped: no built approach selected.'), '',
     '| Corpus part | API tokens |', '| --- | ---: |', ...Object.entries(run.corpus.tokens?.parts ?? {}).map(([k, v]) => `| ${k} | ${v} |`), ''];
   for (const a of run.approaches) {
-    lines.push(`## ${a.name} — ${a.status}`, '');
+    const strategy = a.strategy ?? (a.name === 'rag' ? run.strategy : undefined);
+    const wide = strategy === 'wide';
+    const retrievalCases = wide ? a.cases.filter(r => !unavailable(r)) : a.cases;
+    lines.push(`## ${a.name}${strategy ? ` (${strategy})` : ''} — ${a.status}`, '');
     if (a.status === 'not built') { lines.push('This approach is not built; no questions were sent.', ''); continue; }
-    const s = summarize(a);
+    const s = summarize({ ...a, ...(strategy ? { strategy } : {}) });
     lines.push(`Comparative model eligibility: **${s.comparisonValid ? 'VALID' : 'INVALID'}**. ${s.comparisonInvalidReason ?? 'All generated answer model receipts match the configured model.'}`, '', `Pass rate: **${pct(s.passRate)}** (${s.passing}/${s.eligible}; excludes open cases and all leak probes). Incomplete or unjudged runs have no pass rate.`, '',
       ...(s.incompleteReason ? [`Incomplete: ${s.incompleteReason}; skipped before starting: ${s.skippedCases.length}.`, ''] : []),
       '| Category | Pass / eligible | Rate |', '| --- | ---: | ---: |',
@@ -101,7 +110,7 @@ export function report(run: Run): string {
       `Actual-context grounding unavailable: ${s.contextGroundingUnavailable.join(', ') || 'none'}.`, '',
       `Leak failures: ${s.leakFailures.join(', ') || 'none'}.`, '',
       ...(a.name === 'rag' ? [`Effective answer paths (fallback successes are separate): ${JSON.stringify(s.effectiveApproaches)}.`, ''] : []),
-      ...(a.name === 'rag' ? [`Fallbacks: ${s.fallback.count}/${s.fallback.attempted} attempted (${pct(s.fallback.frequency)}); ${s.fallback.completedWholeAnswers} completed whole-corpus answers.`, ''] : []),
+      ...(wide ? [`Unavailable answers: ${s.unavailableCount}.`, '', 'Fallbacks: 0; not applicable (no whole fallback).', ''] : a.name === 'rag' ? [`Fallbacks: ${s.fallback.count}/${s.fallback.attempted} attempted (${pct(s.fallback.frequency)}); ${s.fallback.completedWholeAnswers} completed whole-corpus answers.`, ''] : []),
       '| Effective path | Answers | First-token samples | First-token p50 ms | First-token p95 ms | Total samples | Total p50 ms | Total p95 ms |', '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
       ...Object.entries(s.latencyByEffectiveApproach).map(([kind, metric]) => `| ${kind} | ${metric.answers} | ${metric.firstTokenMs.count} | ${cell(metric.firstTokenMs.p50)} | ${cell(metric.firstTokenMs.p95)} | ${metric.totalMs.count} | ${cell(metric.totalMs.p50)} | ${cell(metric.totalMs.p95)} |`), '',
       'Percentiles use nearest rank on observed successful-answer samples; missing first-token timings are excluded, never treated as zero. Small sample counts do not establish stable tail latency.', '',
@@ -124,11 +133,11 @@ export function report(run: Run): string {
     lines.push('', '### Grounding', '');
     for (const r of a.cases) if (r.judge?.unsupportedClaims.length) lines.push(`- ${cell(r.case.id)}: ${cell(r.judge.unsupportedClaims.join('; '))}`);
     for (const r of a.cases) if (r.judge?.unsupportedInContextClaims?.length) lines.push(`- ${cell(r.case.id)} (unsupported by supplied context): ${cell(r.judge.unsupportedInContextClaims.join('; '))}`);
-    lines.push('', '### Retrieval stage recall', '', 'Each stage uses its best complete gold option; absent stages are unmeasured. Filtered retains relevance-qualified candidates, reranked applies the top-eight cutoff. Selected means packed before adequacy, while Recall@k below describes evidence actually supplied to generation.', '', '| Stage | Measured cases | Mean recall |', '| --- | ---: | ---: |', ...Object.entries(s.retrievalStages).map(([stage, metric]) => `| ${stage} | ${metric.cases} | ${cell(metric.meanRecall)} |`), '', '| Case | Stage | k | Recall@k | First gold rank | Gold option |', '| --- | --- | ---: | ---: | ---: | ---: |');
-    for (const r of a.cases) for (const [stage, metric] of Object.entries(r.retrievalStages ?? {})) lines.push(`| ${cell(r.case.id)} | ${stage} | ${metric.k} | ${cell(metric.recallAtK)} | ${cell(metric.firstGoldRank)} | ${cell(metric.selectedGoldSetIndex)} |`);
-    for (const r of a.cases) if (r.retrievalLosses) lines.push(`- ${cell(r.case.id)} excluded IDs by decision: ${cell(JSON.stringify(r.retrievalLosses))}`);
+    lines.push('', '### Retrieval stage recall', '', wide ? 'Each stage uses its best complete gold option; absent stages are unmeasured. Dense and lexical describe search; always is career context and supplied is evidence actually sent to generation. Unavailable answers are excluded from stage recall and losses.' : 'Each stage uses its best complete gold option; absent stages are unmeasured. Filtered retains relevance-qualified candidates, reranked applies the top-eight cutoff. Selected means packed before adequacy, while Recall@k below describes evidence actually supplied to generation.', '', '| Stage | Measured cases | Mean recall |', '| --- | ---: | ---: |', ...Object.entries(s.retrievalStages).map(([stage, metric]) => `| ${stage} | ${metric.cases} | ${cell(metric.meanRecall)} |`), '', '| Case | Stage | k | Recall@k | First gold rank | Gold option |', '| --- | --- | ---: | ---: | ---: | ---: |');
+    for (const r of retrievalCases) for (const [stage, metric] of Object.entries(r.retrievalStages ?? {})) lines.push(`| ${cell(r.case.id)} | ${stage} | ${metric.k} | ${cell(metric.recallAtK)} | ${cell(metric.firstGoldRank)} | ${cell(metric.selectedGoldSetIndex)} |`);
+    for (const r of retrievalCases) if (r.retrievalLosses) lines.push(`- ${cell(r.case.id)} excluded IDs by decision: ${cell(JSON.stringify(r.retrievalLosses))}`);
     lines.push('', '### Retrieval and stage timings', '', '| Case | Recall@k | First gold rank | Gold set index (0-based) | Retrieved unused | Dropped by rerank | Stages ms |', '| --- | ---: | ---: | ---: | ---: | --- | --- |');
-    for (const r of a.cases) if (r.retrieval || r.answer?.timings.stages) lines.push(`| ${cell(r.case.id)} | ${cell(r.retrieval?.recallAtK)} | ${cell(r.retrieval?.firstGoldRank)} | ${cell(r.retrieval?.selectedGoldSetIndex)} | ${cell(r.retrieval?.retrievedButUnused)} | ${cell(r.retrieval?.droppedByRerank?.join(', '))} | ${cell(r.answer?.timings.stages ? JSON.stringify(r.answer.timings.stages) : null)} |`);
+    for (const r of retrievalCases) if (r.retrieval || r.answer?.timings.stages) lines.push(`| ${cell(r.case.id)} | ${cell(r.retrieval?.recallAtK)} | ${cell(r.retrieval?.firstGoldRank)} | ${cell(r.retrieval?.selectedGoldSetIndex)} | ${cell(r.retrieval?.retrievedButUnused)} | ${cell(r.retrieval?.droppedByRerank?.join(', '))} | ${cell(r.answer?.timings.stages ? JSON.stringify(r.answer.timings.stages) : null)} |`);
     lines.push('');
   }
   return lines.join('\n');
@@ -144,9 +153,9 @@ export async function writeRun(out: string, run: Run): Promise<string> {
       dir = `${base}-${i}`; // Preserve runs made in the same minute.
     }
   }
-  const summaries = run.approaches.map(a => ({ name: a.name, status: a.status, ...summarize(a) }));
+  const summaries = run.approaches.map(a => ({ name: a.name, status: a.status, ...(a.strategy ? { strategy: a.strategy } : {}), ...summarize({ ...a, strategy: a.strategy ?? (a.name === 'rag' ? run.strategy : undefined) }) }));
   await writeFile(path.join(dir, 'results.json'), JSON.stringify({ ...run, summaries }, null, 2) + '\n');
   await writeFile(path.join(dir, 'report.md'), report(run));
-  await appendFile(path.join(out, 'runs.jsonl'), JSON.stringify({ startedAt: run.startedAt, corpusVersion: run.corpus.version, promptTemplateVersion: run.promptTemplateVersion, retrievalConfigVersion: run.retrievalConfigVersion, answerModel: run.answerModel, judgeModel: run.judgeModel, dir, summaries }) + '\n');
+  await appendFile(path.join(out, 'runs.jsonl'), JSON.stringify({ ...(run.strategy ? { strategy: run.strategy } : {}), startedAt: run.startedAt, corpusVersion: run.corpus.version, promptTemplateVersion: run.promptTemplateVersion, retrievalConfigVersion: run.retrievalConfigVersion, answerModel: run.answerModel, judgeModel: run.judgeModel, dir, summaries }) + '\n');
   return dir;
 }

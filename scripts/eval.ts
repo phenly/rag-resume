@@ -14,6 +14,8 @@ import { writeRun, type Run } from '../lib/eval/report';
 import { withEvalSnapshot } from '../lib/eval/snapshot';
 import { ragApproach } from '../lib/eval/rag';
 import { wholeApproach } from '../lib/eval/whole';
+import { configuredStrategy, type RetrievalStrategy } from '../lib/retrieval/load';
+import { activeRetrievalConfigVersion } from '../lib/retrieval/production';
 import { RETRIEVAL_CONFIG_VERSION } from '../lib/retrieval/pipeline';
 import { PROMPT_TEMPLATE_VERSION } from '../lib/prompt';
 import { MODEL_PRICES } from '../lib/eval/pricing';
@@ -23,6 +25,7 @@ import { isAccountQuotaError } from '../lib/eval/retry';
 
 const help = `Usage: npm run eval -- --cases <path> --out <dir> [options]
   --approach whole|rag|both  Default: whole; rag requires retrieval provider keys and a context limit
+  --strategy jev|wide       Default: configured strategy (jev); requires rag or both
   --only id,id              Run selected case IDs
   --concurrency N           After the first question; default 3 (first is serial)
   --no-judge                Run checks only; no quality pass rate
@@ -36,12 +39,19 @@ export async function main(args: string[]) {
   for (let i = 0; i < args.length; i++) {
     const key = args[i];
     if (key === '--no-judge') { noJudge = true; continue; }
-    if (!['--cases', '--out', '--approach', '--only', '--concurrency'].includes(key) || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`Invalid argument: ${key}\n${help}`);
+    if (!['--cases', '--out', '--approach', '--only', '--concurrency', '--strategy'].includes(key) || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`Invalid argument: ${key}\n${help}`);
     options[key] = args[++i];
   }
   if (!options['--cases'] || !options['--out']) throw new Error(help);
   const selected = options['--approach'] ?? 'whole';
   if (!['whole', 'rag', 'both'].includes(selected)) throw new Error('--approach must be whole, rag, or both');
+  const explicitStrategy = options['--strategy'];
+  if (explicitStrategy !== undefined && explicitStrategy !== 'jev' && explicitStrategy !== 'wide') throw new Error('--strategy must be jev or wide');
+  if (explicitStrategy !== undefined && selected === 'whole') throw new Error('--strategy requires --approach rag or both');
+  const strategy: RetrievalStrategy | undefined = selected === 'whole' ? undefined : explicitStrategy ?? configuredStrategy();
+  // Preserve historical receipts when Jev is selected by the unset default.
+  const strategyReceipt = strategy && (explicitStrategy !== undefined || process.env.CVAI_RETRIEVAL_STRATEGY || strategy === 'wide')
+    ? { strategy, retrievalConfigVersion: activeRetrievalConfigVersion(strategy) } : {};
   const concurrency = Number(options['--concurrency'] ?? 3);
   if (!Number.isSafeInteger(concurrency) || concurrency < 1) throw new Error('--concurrency must be a positive integer');
   let { cases } = await readCases(options['--cases']);
@@ -57,6 +67,7 @@ export async function main(args: string[]) {
     const indexSnapshot = selected === 'whole' ? undefined : await readFile(path.join(dir, 'retrieval-index.json'), 'utf8');
     const configReceipt = readAskConfig();
     const receipt = {
+      ...strategyReceipt,
       codeRevision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
       workingTreeDirty: !!execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim(),
       workingDiffSha256: createHash('sha256').update(execFileSync('git', ['diff', 'HEAD'], { maxBuffer: 16 * 1024 * 1024 })).digest('hex'),
@@ -68,7 +79,7 @@ export async function main(args: string[]) {
     };
     const index = await chunkIndex(dir, corpus);
     for (const c of cases) for (const id of c.goldChunkSets?.flat() ?? c.goldChunks) if (!index.ids.includes(id)) throw new Error(`${c.id}: gold chunk ${id} is absent from corpus chunk index`);
-    const run: Run = { version: 1, status: 'complete', retrievalConfigVersion: RETRIEVAL_CONFIG_VERSION, promptTemplateVersion: PROMPT_TEMPLATE_VERSION, startedAt, answerModel: configReceipt.model, judgeModel: noJudge ? null : process.env.EVAL_JUDGE_MODEL?.trim() || 'claude-sonnet-5-5', corpus: { version: corpus.version, chunkCount: index.ids.length }, approaches: [] };
+    const run: Run = { version: 1, status: 'complete', retrievalConfigVersion: strategy ? activeRetrievalConfigVersion(strategy) : RETRIEVAL_CONFIG_VERSION, ...strategyReceipt, promptTemplateVersion: PROMPT_TEMPLATE_VERSION, startedAt, answerModel: configReceipt.model, judgeModel: noJudge ? null : process.env.EVAL_JUDGE_MODEL?.trim() || 'claude-sonnet-5-5', corpus: { version: corpus.version, chunkCount: index.ids.length }, approaches: [] };
     const frozenFiles: Record<string, string> = {
       'receipt.json': JSON.stringify(receipt, null, 2) + '\n',
       'cases.json': JSON.stringify({ version: 1, cases }, null, 2) + '\n',
@@ -99,7 +110,7 @@ export async function main(args: string[]) {
       if (selected !== 'whole' && !run.approaches.some(approach => approach.status === 'incomplete')) {
         const config = configReceipt;
         const client = new Anthropic({ apiKey: config.apiKey, maxRetries: 0 });
-        run.approaches.push(await runApproach({ approach: ragApproach(config, { corpusDir: dir, client }), corpus, cases, concurrency, model: config.model, judgeModel: run.judgeModel ?? '', judge: noJudge ? undefined : createJudge(client, run.judgeModel!, index.text) }));
+        run.approaches.push(await runApproach({ approach: ragApproach(config, { corpusDir: dir, client, strategy }), corpus, cases, concurrency, model: config.model, judgeModel: run.judgeModel ?? '', judge: noJudge ? undefined : createJudge(client, run.judgeModel!, index.text) }));
       }
       const stopped = run.approaches.find(approach => approach.status === 'incomplete');
       if (stopped) {

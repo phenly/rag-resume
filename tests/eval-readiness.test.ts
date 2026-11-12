@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
 import type Anthropic from '@anthropic-ai/sdk';
 import { grade, retrievalMetrics, runApproach } from '../lib/eval/runner';
@@ -59,6 +60,8 @@ it('reports nearest-rank tail latency by effective path without counting missing
   expect(summary.contextGrounding).toEqual({ assessed: 21, unavailable: 1, unjudged: 0 });
   expect(summary).toMatchObject({ eligible: 22, passing: 22, passRate: 1, comparisonValid: false, comparisonIneligible: ['FALLBACK'] });
   const rendered = report({ version: 1, startedAt: 'synthetic', answerModel: 'synthetic', judgeModel: 'synthetic', corpus: { version: 'fake', chunkCount: 3 }, approaches: [approach] });
+  // Captured from this existing Jev fixture before Task 7b implementation (4,339 bytes).
+  expect(createHash('sha256').update(rendered).digest('hex')).toBe('57cc185c0b595078285f9341e6f5ad621f77f2fe210f7b4a6d2afee47e4e9249');
   expect(rendered).toContain('Comparative model eligibility: **INVALID**');
   expect(rendered).toContain('22/22');
   expect(rendered).toContain('missing first-token timings are excluded, never treated as zero');
@@ -182,4 +185,48 @@ it('wide loss attribution uses non-always rank and the best complete gold option
   expect(result.retrievalLosses).toEqual({ 'pack-budget': ['X40'], 'not-retrieved': ['X50'] });
   expect(grade({ ...testcase, goldChunkSets: [['X50'], ['ALWAYS', 'X40']] }, supplied).retrievalLosses).toEqual({ 'pack-budget': ['X40'], 'not-retrieved': [] });
   expect(grade({ ...testcase, goldChunkSets: undefined, goldChunks: ['X40'] }, supplied).retrievalLosses).toEqual({ 'pack-budget': ['X40'], 'not-retrieved': [] });
+});
+
+it('the report names wide and renders dense, lexical, always, supplied', async () => {
+  const { report, summarize } = await import('../lib/eval/report');
+  const supplied: Answer = { ...answer, effectiveApproach: 'rag', actualContext: 'wide-evidence', retrievedChunkIds: ['C'], retrievalTrace: {
+    strategy: 'wide', retrievalConfigVersion: 'fictional-wide', elapsedMs: 1, stages: {},
+    search: { dense: [{ id: 'C', score: 1 }], lexical: [], fused: [] },
+    wide: { alwaysIds: [], retrievedIds: ['C'], droppedIds: [], evidenceBytes: 1, overviewPresent: false },
+  } };
+  const approach = { name: 'rag', strategy: 'wide' as const, status: 'complete' as const, indexFreshness: 'matching', embeddingDollars: .01,
+    cases: [{ case: c, ...grade(c, supplied, output), answer: supplied, judge: output, comparisonEligible: true, answerDollars: 0, judgeDollars: 0, retrievalDollars: .01 }] };
+  expect(Object.keys(summarize(approach).retrievalStages)).toEqual(['dense', 'lexical', 'always', 'supplied']);
+  const rendered = report({ version: 1, strategy: 'wide', startedAt: 'fictional', answerModel: 'fictional', judgeModel: null, corpus: { version: 'fictional', chunkCount: 1 }, approaches: [approach] });
+  expect(rendered).toContain('## rag (wide) — complete');
+  for (const stage of ['dense', 'lexical', 'always', 'supplied']) expect(rendered).toContain(`| ${stage} | 1 |`);
+  expect(rendered).not.toContain('| fused |');
+  expect(rendered).toContain('Fallbacks: 0; not applicable (no whole fallback)');
+  expect(rendered).toContain('| retrievalDollars | 0.01 |');
+});
+
+it.each(['context-overflow', 'context-limit-unconfigured'])('unavailable wide answers with evidence traces are counted separately from recall and losses: %s', async reason => {
+  const { report, summarize } = await import('../lib/eval/report');
+  const unavailable: Answer = { ...answer, effectiveApproach: 'unavailable', actualContext: 'none', retrievedChunkIds: [], generationEligibility: { eligible: false, reason }, retrievalTrace: {
+    strategy: 'wide', retrievalConfigVersion: 'fictional-wide', elapsedMs: 1, stages: {},
+    search: { dense: [{ id: 'A', score: 1 }], lexical: [], fused: [] },
+    wide: { alwaysIds: [], retrievedIds: [], droppedIds: ['A'], evidenceBytes: 0, overviewPresent: false },
+    embedding: { status: 'usage-unknown' },
+  } };
+  const result = await runApproach({ corpus: await loadCorpus('sample-corpus'), cases: [c, { ...c, id: 'PROVIDER' }, { ...c, id: 'JUDGE' }, { ...c, id: 'HEALTHY' }], concurrency: 1, model: 'fictional', judgeModel: 'fictional',
+    approach: { name: 'rag', strategy: 'wide', prepare: async () => {}, answer: vi.fn().mockResolvedValueOnce(unavailable).mockRejectedValueOnce(new Error('fictional provider failure')).mockResolvedValueOnce(answer).mockResolvedValueOnce({ ...answer, effectiveApproach: 'rag', retrievedChunkIds: ['C'], retrievalTrace: { ...unavailable.retrievalTrace, search: { dense: [{ id: 'C', score: 1 }], lexical: [], fused: [] }, wide: { alwaysIds: [], retrievedIds: ['C'], droppedIds: [], evidenceBytes: 1, overviewPresent: false } } }) },
+    judge: async row => { if (row.id === 'JUDGE') throw new Error('fictional judge failure'); return { output, usage: answer.usage }; } });
+  expect(result.incompleteReason).toBe('wide-unavailable');
+  expect(result.cases[0].retrievalStages?.supplied?.recallAtK).toBe(0);
+  expect(result.cases[0].retrievalLosses).toEqual({ 'pack-budget': ['A'], 'not-retrieved': ['B'] });
+  const summary = summarize(result);
+  expect(summary).toMatchObject({ unavailableCount: 1, qualityComplete: false, comparisonValid: false, passRate: null, retrievalDollars: null, costIncomplete: true });
+  expect(summary.retrievalStages).toEqual({ dense: { cases: 1, meanRecall: 1 }, lexical: { cases: 1, meanRecall: 0 }, always: { cases: 1, meanRecall: 0 }, supplied: { cases: 1, meanRecall: 1 } });
+  const rendered = report({ version: 1, strategy: 'wide', startedAt: 'fictional', answerModel: 'fictional', judgeModel: null, corpus: { version: 'fictional', chunkCount: 1 }, approaches: [result] });
+  expect(rendered).toContain('Unavailable answers: 1.');
+  expect(rendered).toContain('not a valid quality comparison');
+  expect(rendered).not.toContain('- F1 excluded IDs by decision');
+  expect(rendered).not.toContain('| F1 | supplied |');
+  expect(rendered).toContain('fictional provider failure');
+  expect(rendered).toContain('fictional judge failure');
 });

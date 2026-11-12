@@ -297,3 +297,18 @@ it.each(['complete', 'usage-unknown'] as const)('runner continues after first wi
   expect(result.cases[1]).toMatchObject({ status: 'pass', comparisonEligible: true });
   expect(summarize(result)).toMatchObject({ qualityComplete: false, comparisonValid: false, passRate: null });
 });
+
+it.each(['jev', 'wide'] as const)('writes explicit %s strategy and active config to results and trends', async strategy => {
+  const { activeRetrievalConfigVersion } = await import('../lib/retrieval/production');
+  const run: Run = { version: 1, strategy, retrievalConfigVersion: activeRetrievalConfigVersion(strategy), startedAt: '2026-11-03', answerModel: 'fictional', judgeModel: null,
+    corpus: { version: 'fictional', chunkCount: 0 }, approaches: [{ name: 'rag', strategy, status: 'complete', cases: [], indexFreshness: null, embeddingDollars: 0 }] };
+  const rendered = report(run);
+  expect(rendered).toContain(`## rag (${strategy})`);
+  for (const stage of strategy === 'jev' ? ['dense', 'lexical', 'fused', 'filtered', 'reranked', 'selected'] : ['dense', 'lexical', 'always', 'supplied']) expect(rendered).toContain(`| ${stage} |`);
+  const out = await mkdtemp(path.join(os.tmpdir(), 'eval-strategy-'));
+  try {
+    const dir = await writeRun(out, run);
+    expect(JSON.parse(await readFile(path.join(dir, 'results.json'), 'utf8'))).toMatchObject({ strategy, retrievalConfigVersion: activeRetrievalConfigVersion(strategy) });
+    expect(JSON.parse((await readFile(path.join(out, 'runs.jsonl'), 'utf8')).trim())).toMatchObject({ strategy, retrievalConfigVersion: activeRetrievalConfigVersion(strategy) });
+  } finally { await rm(out, { recursive: true, force: true }); }
+});
