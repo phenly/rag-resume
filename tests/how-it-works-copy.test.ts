@@ -22,7 +22,7 @@ describe('how it works copy', () => {
     const t = text('wide');
     expect(t).toContain('Voyage AI receives your question');
     expect(t).not.toContain('TypeSafe');
-    expect(t).not.toContain('whole archive');
+    expect(t).toContain('No fallback to the whole archive');
   });
 
   it('jev discloses both search services and the whole-archive fallback', () => {
@@ -32,12 +32,26 @@ describe('how it works copy', () => {
     expect(t).toContain('whole archive');
   });
 
-  it('no mode claims answers list their sources, and each has four boxes and steps', () => {
+  it('no mode claims answers list their sources, and each has a four-box flow under exactly one diagram section', () => {
     for (const mode of ['whole', 'wide', 'jev'] as const) {
       const copy = howItWorksCopy(mode);
       expect(copy.boxes).toHaveLength(4);
-      expect(copy.steps).toHaveLength(4);
-      expect(text(mode)).not.toMatch(/sources|which material it used/);
+      expect(copy.sections.filter((s) => s.diagram)).toHaveLength(1);
+      expect(text(mode)).not.toMatch(/which material it used|with its sources/);
     }
+  });
+
+  it('whole and jev keep four steps; wide explains indexing, embeddings and what it leaves out', () => {
+    expect(howItWorksCopy('whole').sections[0].steps).toHaveLength(4);
+    expect(howItWorksCopy('jev').sections[0].steps).toHaveLength(4);
+    const wide = howItWorksCopy('wide');
+    expect(wide.indexBoxes).toHaveLength(4);
+    expect(howItWorksCopy('whole').indexBoxes).toBeUndefined();
+    expect(wide.sections.map((s) => s.title)).toEqual([
+      'Two jobs, run at different times', 'Before any question: building the index', 'What an embedding is',
+      'When you ask a question', 'What it deliberately leaves out', 'How it is tested',
+    ]);
+    expect(text('wide')).toContain('cosine similarity');
+    expect(text('wide')).toContain('No fallback to the whole archive');
   });
 });

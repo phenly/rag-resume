@@ -11,3 +11,5 @@
 .arrowHead { fill: var(--color-accent); }
 .steps, .next { padding-left: var(--space-5); }
 .steps li, .next li { margin-bottom: var(--space-2); }
+.rowLabel { fill: var(--color-muted); font-family: var(--font-sans); font-size: var(--font-size-diagram-note); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.link { fill: none; stroke: var(--color-accent); stroke-width: var(--stroke-medium); stroke-dasharray: 5 4; }
