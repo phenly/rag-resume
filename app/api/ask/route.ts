@@ -43,18 +43,23 @@ async function* answerEvents(question: string, corpus: Corpus, config: AskConfig
           switch (result.kind) {
             case 'cancelled': return;
             case 'unavailable':
+              // Reason codes only: never the question or evidence.
+              console.warn(`wide retrieval unavailable: ${result.reason} after ${Math.round(result.trace.elapsedMs)}ms`);
+              break;
             case 'route':
             case 'fallback': break;
             case 'evidence': {
               const candidate = buildWideSystemPrompt(corpus, result.always ?? [], result.selected);
               if (fitsGeneratorContext({ byteBound: requestByteBound({ system: candidate, question, history }), maxTokens: config.maxTokens, limit })) wideSystem = candidate;
+              else console.warn('wide retrieval unavailable: request exceeds the generator size bound');
               break;
             }
             default: assertNever(result);
           }
         }
-      } catch {
+      } catch (error) {
         // Wide preparation and resolution always fail closed; never build whole.
+        console.warn(`wide retrieval unavailable: ${error instanceof Error ? error.name : 'error'} during preparation`);
         wideSystem = undefined;
       }
       if (signal.aborted) return;

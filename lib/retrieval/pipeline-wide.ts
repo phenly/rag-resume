@@ -12,7 +12,7 @@ import type { PrepareRagPipelineOptions, RagPipeline, RagResolution, RagTrace } 
 
 export const WIDE_PIPELINE_CONFIG = Object.freeze({
   version: 'wide-pipeline-1', strategy: 'wide',
-  totalTimeoutMs: 5000, embeddingTimeoutMs: 2000, embeddingUsdPerMillionTokens: 0.12,
+  totalTimeoutMs: 5000, embeddingTimeoutMs: 2000, embeddingAttempts: 2, embeddingUsdPerMillionTokens: 0.12,
   search: { denseLimit: 'all-units', lexicalLimit: 24, candidateLimit: 24,
     k1: 1.2, b: 0.75, rrfK: 60, questionWeight: 2, contextWeight: 1 },
   promptLayout: { version: 'wide-prompt-1', order: ['shared-prefix', 'always', 'retrieved'],
@@ -75,19 +75,28 @@ export async function prepareWidePipeline(options: PrepareWidePipelineOptions): 
       trace.query = { inputTokens: query.inputTokens, retainedTurns: query.retainedTurns.length, droppedTurns: query.droppedTurns, truncatedAnswer: query.truncatedAnswer };
       changeStage('embedding');
       trace.embedding = { status: 'usage-unknown' };
-      const embeddingController = new AbortController();
-      const cancelEmbedding = () => embeddingController.abort();
-      controller.signal.addEventListener('abort', cancelEmbedding, { once: true });
-      let rejectEmbedding!: (error: Error) => void;
-      const embeddingStop = new Promise<never>((_, reject) => { rejectEmbedding = reject; });
-      const embeddingTimer = setTimeout(() => { rejectEmbedding(new Error('embedding-timeout')); embeddingController.abort(); }, WIDE_PIPELINE_CONFIG.embeddingTimeoutMs);
+      // The query embedding is the only network call here; one retry inside the total deadline absorbs a slow or dropped first call.
+      const embedOnce = async () => {
+        const embeddingController = new AbortController();
+        const cancelEmbedding = () => embeddingController.abort();
+        controller.signal.addEventListener('abort', cancelEmbedding, { once: true });
+        let rejectEmbedding!: (error: Error) => void;
+        const embeddingStop = new Promise<never>((_, reject) => { rejectEmbedding = reject; });
+        const embeddingTimer = setTimeout(() => { rejectEmbedding(new Error('embedding-timeout')); embeddingController.abort(); }, WIDE_PIPELINE_CONFIG.embeddingTimeoutMs);
+        try {
+          return await Promise.race([embedder.embed([query.embeddingInput], 'query', { signal: embeddingController.signal }), embeddingStop]);
+        } finally {
+          clearTimeout(embeddingTimer);
+          controller.signal.removeEventListener('abort', cancelEmbedding);
+          embeddingController.abort();
+        }
+      };
       let embedded;
-      try {
-        embedded = await Promise.race([embedder.embed([query.embeddingInput], 'query', { signal: embeddingController.signal }), embeddingStop]);
-      } finally {
-        clearTimeout(embeddingTimer);
-        controller.signal.removeEventListener('abort', cancelEmbedding);
-        embeddingController.abort();
+      for (let attempt = 1; ; attempt++) {
+        try { embedded = await embedOnce(); break; } catch (error) {
+          if (controller.signal.aborted || attempt >= WIDE_PIPELINE_CONFIG.embeddingAttempts) throw error;
+          trace.embeddingRetries = attempt;
+        }
       }
       if (controller.signal.aborted) throw new Error('aborted');
       if (embedded.model !== index!.embedding.model || embedded.dimensions !== index!.embedding.dimensions

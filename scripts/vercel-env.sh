@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Push production env vars to the linked Vercel project. Reads ANTHROPIC_API_KEY, RAG_MODEL and
 # RAG_EFFORT from .env.local; creates HISTORY_SECRET and an invite token per name in .env.deploy (gitignored).
+# The answering approach comes from .env.deploy: CVAI_APPROACH=whole|rag (default whole) and, for rag,
+# CVAI_RETRIEVAL_STRATEGY=jev|wide. rag also pushes VOYAGE_API_KEY and RAG_GENERATOR_CONTEXT_TOKENS from .env.local.
 # Usage: scripts/vercel-env.sh <hostname> [invitee ...]   e.g. scripts/vercel-env.sh rag-resume-x.vercel.app lee
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -30,3 +32,21 @@ put RAG_EFFORT "${RAG_EFFORT:-medium}"
 put ALLOWED_HOSTS "$host"
 put INVITE_TOKENS "$tokens"
 put HISTORY_SECRET "$history_secret"
+
+deploy_value() { command grep "^$1=" .env.deploy | head -n 1 | cut -d= -f2- || true; }
+approach="$(deploy_value CVAI_APPROACH)"; approach="${approach:-whole}"
+[[ "$approach" == whole || "$approach" == rag ]] || { echo 'CVAI_APPROACH in .env.deploy must be whole or rag' >&2; exit 1; }
+put CVAI_APPROACH "$approach"
+if [[ "$approach" == rag ]]; then
+  strategy="$(deploy_value CVAI_RETRIEVAL_STRATEGY)"; strategy="${strategy:-jev}"
+  [[ "$strategy" == jev || "$strategy" == wide ]] || { echo 'CVAI_RETRIEVAL_STRATEGY in .env.deploy must be jev or wide' >&2; exit 1; }
+  : "${VOYAGE_API_KEY:?rag needs VOYAGE_API_KEY in .env.local}"
+  : "${RAG_GENERATOR_CONTEXT_TOKENS:?rag needs RAG_GENERATOR_CONTEXT_TOKENS in .env.local}"
+  put CVAI_RETRIEVAL_STRATEGY "$strategy"
+  put VOYAGE_API_KEY "$VOYAGE_API_KEY"
+  put RAG_GENERATOR_CONTEXT_TOKENS "$RAG_GENERATOR_CONTEXT_TOKENS"
+  if [[ "$strategy" == jev ]]; then
+    : "${TYPESAFE_API_KEY:?the jev strategy needs TYPESAFE_API_KEY in .env.local}"
+    put TYPESAFE_API_KEY "$TYPESAFE_API_KEY"
+  fi
+fi

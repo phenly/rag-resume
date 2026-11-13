@@ -33,6 +33,7 @@ export type RagTrace = {
   strategy?: 'jev' | 'wide';
   wide?: { alwaysIds: string[]; retrievedIds: string[]; droppedIds: string[]; evidenceBytes: number; overviewPresent: boolean };
   unavailableReason?: string;
+  embeddingRetries?: number;
 };
 export type RagResolution = (
   | { kind: 'evidence'; selected: RetrievalUnit[]; always?: RetrievalUnit[] }

@@ -46,11 +46,11 @@ it.each([{ model: 'wrong' }, { dimensions: 2 }])('rejects mismatched embedding r
   const { options, response, embed } = await setup(); embed.mockResolvedValue({ ...response, ...patch } as typeof response);
   expect(await (await prepareWidePipeline(options)).resolve({ question: 'lantern' })).toMatchObject({ kind: 'unavailable', reason: 'embedding-response' });
 });
-it('embedding slower than 2000 ms is unavailable and aborted', async () => {
+it('two embeddings each slower than 2000 ms are unavailable and aborted', async () => {
   const { options, embed } = await setup(); let signal: AbortSignal | undefined;
   embed.mockImplementation((_texts, _type, input) => { signal = input?.signal; return new Promise(() => {}); });
   const pipeline = await prepareWidePipeline(options); vi.useFakeTimers(); const pending = pipeline.resolve({ question: 'lantern' });
-  await vi.advanceTimersByTimeAsync(2001); expect(await pending).toMatchObject({ kind: 'unavailable', reason: 'embedding-error' }); expect(signal?.aborted).toBe(true);
+  await vi.advanceTimersByTimeAsync(4002); expect(await pending).toMatchObject({ kind: 'unavailable', reason: 'embedding-error' }); expect(signal?.aborted).toBe(true); expect(embed).toHaveBeenCalledTimes(2);
 });
 it('abort before start returns cancelled', async () => {
   const { options, embed } = await setup(); expect(await (await prepareWidePipeline(options)).resolve({ question: 'lantern', signal: AbortSignal.abort() })).toMatchObject({ kind: 'cancelled' }); expect(embed).not.toHaveBeenCalled();
@@ -74,4 +74,16 @@ it('assertNever rejects future kinds at compile time and runtime', () => {
     // @ts-expect-error Future resolutions must be handled before assertNever.
     assertNever({ kind: 'future' });
   }).toThrow('Unexpected RAG resolution');
+});
+it('retries a failed query embedding once and then serves evidence', async () => {
+  const { options, embed, response } = await setup();
+  embed.mockRejectedValueOnce(new Error('network')).mockResolvedValueOnce(response);
+  const result = await (await prepareWidePipeline(options)).resolve({ question: 'lantern' });
+  expect(result.kind).toBe('evidence'); expect(embed).toHaveBeenCalledTimes(2); expect(result.trace.embeddingRetries).toBe(1);
+});
+it('is unavailable with embedding-error after two failed embeddings, with no third call', async () => {
+  const { options, embed } = await setup();
+  embed.mockRejectedValue(new Error('network'));
+  const result = await (await prepareWidePipeline(options)).resolve({ question: 'lantern' });
+  expect(result).toMatchObject({ kind: 'unavailable', reason: 'embedding-error' }); expect(embed).toHaveBeenCalledTimes(2);
 });

@@ -257,6 +257,13 @@ describe("publishing shell scripts (offline)", () => {
     expect(await readFile(f.curlStdin, "utf8")).toBe("Cookie: invite=test-token\n");
   });
 
+  it.each([["whole", 0], ["rag", 0], ["other", 1]] as const)("live-version --json with approach %s exits %i", async (approach, status) => {
+    const f = await shellFixture();
+    const result = f.run("live-version.sh", ["--json"], { LIVE_BODY: JSON.stringify({ ...metadata(), approach }) });
+    expect(result.status, result.stderr).toBe(status);
+    if (status === 0) expect(JSON.parse(result.stdout).approach).toBe(approach);
+  });
+
   it.each(["403", "404", "500"])("live-version reports HTTP %s without the token or body", async (status) => {
     const f = await shellFixture();
     const result = f.run("live-version.sh", [], {

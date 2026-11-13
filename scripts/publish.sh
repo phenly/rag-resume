@@ -16,6 +16,11 @@ SOURCE="$VAULT/Career/Source"
 GENTE="$VAULT/Reference/Gente"
 CORPUS="$VAULT/Coding/rag-resume/corpus"
 
+# The deployment's approach comes from .env.deploy (set by vercel-env.sh); the live check compares against it.
+CVAI_APPROACH="$(awk '/^CVAI_APPROACH=/ { print substr($0, index($0, "=") + 1); exit }' .env.deploy 2>/dev/null || true)"
+export CVAI_APPROACH="${CVAI_APPROACH:-whole}"
+[[ "$CVAI_APPROACH" == whole || "$CVAI_APPROACH" == rag ]] || { echo 'CVAI_APPROACH in .env.deploy must be whole or rag' >&2; exit 1; }
+
 # Use the installed tsx only, even if npm would otherwise try to download it.
 export npm_config_offline=true npm_config_yes=false
 career-source lint --source "$SOURCE"
