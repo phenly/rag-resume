@@ -70,6 +70,10 @@ for ((attempt = 1; attempt <= 12; attempt++)); do
         exit 1
       fi
       mv "$receipt_file" "$CORPUS/published.json"
+      if ! scripts/corpus-status.sh --commit; then
+        echo 'Published successfully, but corpus recording failed; rerun scripts/corpus-status.sh --commit.' >&2
+        exit 1
+      fi
       printf 'Live and current: %s\n' "$local_version"
       exit 0
     fi

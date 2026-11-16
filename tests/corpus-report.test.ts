@@ -161,7 +161,11 @@ if [[ " $* " == *' scripts/retrieval-status.ts '* ]]; then
   exit
 fi
 [[ -f "$3/keep.txt" && -f "$3/career/exported.txt" ]]
-echo 'version source-version'
+if [[ "$3" == "$VAULT/Coding/rag-resume/corpus" ]]; then
+  printf 'version %s\\n' "\${LOCAL_VERSION:-source-version}"
+else
+  echo 'version source-version'
+fi
 if [[ " $* " == *' --against '* ]]; then echo 'changed EX-1 — First project'; fi
 if [[ " $* " == *' --write '* ]]; then
   printf '{"version":"%s"}\\n' "\${WRITTEN_VERSION:-source-version}" > "\${@: -1}"
@@ -193,6 +197,12 @@ done
 printf '%s' "\${LIVE_BODY:-}"
 printf '%b' "\${write_out//'%{http_code}'/\${HTTP_STATUS:-200}}"
 `);
+  // Real Git verifies path isolation; export/network/deployment remain stubbed.
+  for (const args of [["init", "-q"], ["config", "user.email", "test@example.invalid"],
+    ["config", "user.name", "Test"], ["add", "."], ["commit", "-qm", "Initial fixture"]]) {
+    const result = spawnSync("git", args, { cwd: vault, encoding: "utf8" });
+    if (result.status !== 0) throw new Error(result.stderr);
+  }
   const calls = path.join(repo, "calls.txt");
   const curlArgs = path.join(repo, "curl-args.txt");
   const curlStdin = path.join(repo, "curl-stdin.txt");
@@ -204,7 +214,7 @@ printf '%b' "\${write_out//'%{http_code}'/\${HTTP_STATUS:-200}}"
         SITE_URL: "https://example.invalid",
         LIVE_BODY: JSON.stringify(metadata()), EXPECTED_METADATA: JSON.stringify(metadata()), ...overrides },
     });
-  return { ...f, repo, corpus, tmp, calls, curlArgs, curlStdin, executable, run };
+  return { ...f, repo, vault, corpus, tmp, calls, curlArgs, curlStdin, executable, run };
 }
 
 describe("publishing shell scripts (offline)", () => {
@@ -313,6 +323,65 @@ exit 1
     expect(result.stdout).toContain("Live and current: source-version");
     const written = JSON.parse(await readFile(path.join(f.corpus, "published.json"), "utf8"));
     expect(written.version).toBe("source-version");
+  });
+
+  it("commit records only verified generated files and preserves unrelated staging", async () => {
+    const f = await shellFixture();
+    await f.put(f.corpus, "career/exported.txt", "synthetic export\n");
+    await f.put(f.corpus, "published.json", JSON.stringify(snapshot({ version: "source-version" })));
+    await f.put(f.vault, "unrelated.txt", "Leave staged");
+    spawnSync("git", ["add", "unrelated.txt", "Coding/rag-resume/corpus/career/exported.txt"], { cwd: f.vault });
+    const result = f.run("corpus-status.sh", ["--commit"]);
+    expect(result.status, result.stderr).toBe(0);
+    const git = (...args: string[]) => spawnSync("git", args, { cwd: f.vault, encoding: "utf8" }).stdout.trim();
+    expect(git("show", "--format=", "--name-only", "HEAD").split("\n")).toEqual([
+      "Coding/rag-resume/corpus/career/exported.txt", "Coding/rag-resume/corpus/published.json",
+    ]);
+    expect(git("diff", "--cached", "--name-only")).toBe("unrelated.txt");
+    const head = git("rev-parse", "HEAD");
+    expect(f.run("corpus-status.sh", ["--commit"]).status).toBe(0);
+    expect(git("rev-parse", "HEAD")).toBe(head);
+  });
+
+  it("commit refuses unexpected local export bytes or an unreachable live site", async () => {
+    const f = await shellFixture();
+    await f.put(f.corpus, "career/exported.txt", "manual changes");
+    await f.put(f.corpus, "published.json", JSON.stringify(snapshot({ version: "source-version" })));
+    const head = () => spawnSync("git", ["rev-parse", "HEAD"], { cwd: f.vault, encoding: "utf8" }).stdout;
+    const initial = head();
+    expect(f.run("corpus-status.sh", ["--commit"]).status).toBe(1);
+    expect(f.run("corpus-status.sh", ["--commit"], { CURL_FAIL: "1" }).status).toBe(1);
+    expect(head()).toBe(initial);
+  });
+
+  it("commit refuses stale local corpus despite live, Source and receipt agreeing", async () => {
+    const f = await shellFixture();
+    await f.put(f.corpus, "career/exported.txt", "synthetic export\n");
+    await f.put(f.corpus, "published.json", JSON.stringify(snapshot({ version: "source-version" })));
+    const result = f.run("corpus-status.sh", ["--commit"], { LOCAL_VERSION: "stale-local" });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("local, source, published and live versions must match");
+    expect(spawnSync("git", ["log", "--format=%s"], { cwd: f.vault, encoding: "utf8" }).stdout.trim()).toBe("Initial fixture");
+  });
+
+  it("commit refuses a stray file that the exporter would leave untouched", async () => {
+    const f = await shellFixture();
+    await f.put(f.corpus, "career/exported.txt", "synthetic export\n");
+    await f.put(f.corpus, "career/private.txt", "Unrelated synthetic note");
+    await f.put(f.corpus, "published.json", JSON.stringify(snapshot({ version: "source-version" })));
+    const result = f.run("corpus-status.sh", ["--commit"]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("private.txt differs from the verified export");
+    expect(spawnSync("git", ["log", "--format=%s"], { cwd: f.vault, encoding: "utf8" }).stdout.trim()).toBe("Initial fixture");
+  });
+
+  it("publish reports a successful deployment with a failed corpus commit", async () => {
+    const f = await shellFixture();
+    await f.executable(f.vault, ".git/hooks/pre-commit", "#!/bin/sh\nexit 1\n");
+    const result = f.run("publish.sh", [], { STUB_DEPLOY: "1" });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Published successfully, but corpus recording failed");
+    expect(JSON.parse(await readFile(path.join(f.corpus, "published.json"), "utf8"))).toHaveProperty("version", "source-version");
   });
 
   it("publish fails when the corpus changed between the report and the write", async () => {
